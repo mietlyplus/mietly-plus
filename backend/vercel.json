@@ -15,11 +15,5 @@
       "src": "/health",
       "dest": "/api/index.js?__path=/health"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/internal/cron/rental-reminders",
-      "schedule": "0 * * * *"
-    }
   ]
 }
