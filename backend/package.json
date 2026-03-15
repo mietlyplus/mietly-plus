@@ -7,6 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "check:cron": "node scripts/check-cron-job.js",
     "seed:admin": "node scripts/create-admin.js",
     "seed": "node scripts/seed.js",
     "seed:reset-products": "node scripts/seed.js --reset-products",
