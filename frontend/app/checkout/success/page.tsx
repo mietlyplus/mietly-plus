@@ -2,14 +2,14 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ClientNavbar } from "@/components/client-navbar";
 import { HomeFooter } from "@/components/home-footer";
 import { clearCart } from "@/lib/cart";
 import { confirmCheckoutSession } from "@/lib/api";
 
-export default function CheckoutSuccessPage() {
+function CheckoutSuccessPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("session_id") || "";
@@ -62,5 +62,27 @@ export default function CheckoutSuccessPage() {
       </main>
       <HomeFooter />
     </div>
+  );
+}
+
+function CheckoutSuccessPageFallback() {
+  return (
+    <div className="min-h-screen bg-zinc-50">
+      <ClientNavbar />
+      <main className="mx-auto w-full max-w-[820px] px-4 py-10">
+        <section className="rounded-2xl border border-zinc-200 bg-white p-8 text-center">
+          <p className="text-sm text-zinc-600">Loading order details...</p>
+        </section>
+      </main>
+      <HomeFooter />
+    </div>
+  );
+}
+
+export default function CheckoutSuccessPage() {
+  return (
+    <Suspense fallback={<CheckoutSuccessPageFallback />}>
+      <CheckoutSuccessPageContent />
+    </Suspense>
   );
 }

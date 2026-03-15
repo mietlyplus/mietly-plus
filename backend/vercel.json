@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "functions": {
+    "api/index.js": {
+      "runtime": "nodejs20.x",
+      "maxDuration": 60
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/index.js?__path=/api/$1"
+    },
+    {
+      "src": "/health",
+      "dest": "/api/index.js?__path=/health"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/internal/cron/rental-reminders",
+      "schedule": "0 * * * *"
+    }
+  ]
+}

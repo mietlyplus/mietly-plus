@@ -74,6 +74,19 @@ if (hasCloudinaryConfig) {
 app.use(cors());
 app.use(express.json());
 
+let appInitPromise = null;
+
+async function initializeApp() {
+  if (!appInitPromise) {
+    appInitPromise = connectDatabase().catch((error) => {
+      appInitPromise = null;
+      throw error;
+    });
+  }
+
+  await appInitPromise;
+}
+
 function buildAdminToken(admin) {
   return jwt.sign(
     {
@@ -136,6 +149,28 @@ function requireUserAuth(req, res, next) {
   } catch {
     return res.status(401).json({ message: "Invalid token." });
   }
+}
+
+function requireCronAuth(req, res, next) {
+  const configuredSecret = String(process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET || "").trim();
+  if (!configuredSecret) {
+    if (process.env.NODE_ENV === "production") {
+      return res.status(500).json({ message: "Cron secret is not configured." });
+    }
+    return next();
+  }
+
+  const authorizationHeader = String(req.headers.authorization || "").trim();
+  const bearerSecret = authorizationHeader.startsWith("Bearer ")
+    ? authorizationHeader.slice("Bearer ".length).trim()
+    : "";
+  const querySecret = String(req.query?.secret || "").trim();
+
+  if (bearerSecret !== configuredSecret && querySecret !== configuredSecret) {
+    return res.status(401).json({ message: "Unauthorized cron request." });
+  }
+
+  return next();
 }
 
 function isValidGermanPhone(phone) {
@@ -1075,6 +1110,16 @@ function buildCategoryTree(categories) {
 
 app.get("/health", (_, res) => {
   res.json({ ok: true, message: "Backend is running" });
+});
+
+app.get("/api/internal/cron/rental-reminders", requireCronAuth, async (_, res) => {
+  try {
+    await runRentalEndingReminderSweep();
+    return res.json({ ok: true, message: "Rental reminder sweep completed." });
+  } catch (error) {
+    console.error("Rental reminder sweep failed:", error.message);
+    return res.status(500).json({ ok: false, message: "Rental reminder sweep failed." });
+  }
 });
 
 app.get("/api/categories", async (req, res) => {
@@ -3044,7 +3089,7 @@ app.delete("/api/auth/account", requireUserAuth, async (req, res) => {
 });
 
 async function startServer() {
-  await connectDatabase();
+  await initializeApp();
 
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
@@ -3066,7 +3111,15 @@ async function startServer() {
   });
 }
 
-startServer().catch((error) => {
-  console.error("Failed to start server:", error.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  startServer().catch((error) => {
+    console.error("Failed to start server:", error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  app,
+  initializeApp,
+  runRentalEndingReminderSweep,
+};

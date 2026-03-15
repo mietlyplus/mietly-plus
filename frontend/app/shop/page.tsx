@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
 import { ClientNavbar } from "@/components/client-navbar";
@@ -24,7 +24,7 @@ function collectDescendantSlugs(category: Category): string[] {
   return slugs;
 }
 
-export default function ShopPage() {
+function ShopPageContent() {
   const router = useRouter();
   const PRODUCTS_PER_BATCH = 9;
   const searchParams = useSearchParams();
@@ -583,5 +583,25 @@ export default function ShopPage() {
       ) : null}
       <HomeFooter />
     </div>
+  );
+}
+
+function ShopPageFallback() {
+  return (
+    <div className="min-h-screen bg-zinc-50">
+      <ClientNavbar />
+      <main className="mx-auto w-full max-w-[1280px] px-4 py-10">
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 text-sm text-zinc-600">Loading products...</div>
+      </main>
+      <HomeFooter />
+    </div>
+  );
+}
+
+export default function ShopPage() {
+  return (
+    <Suspense fallback={<ShopPageFallback />}>
+      <ShopPageContent />
+    </Suspense>
   );
 }

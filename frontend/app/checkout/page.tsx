@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ClientNavbar } from "@/components/client-navbar";
 import { HomeFooter } from "@/components/home-footer";
@@ -54,7 +54,7 @@ function isAddressComplete(address: ShippingAddress | null) {
   );
 }
 
-export default function CheckoutPage() {
+function CheckoutPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [hydrated, setHydrated] = useState(false);
@@ -602,5 +602,25 @@ export default function CheckoutPage() {
 
       <HomeFooter />
     </div>
+  );
+}
+
+function CheckoutPageFallback() {
+  return (
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(73,153,173,0.16)_0%,rgba(73,153,173,0.06)_30%,#f8fafc_65%,#f4f7f9_100%)]">
+      <ClientNavbar />
+      <main className="mx-auto w-full max-w-[1200px] px-4 py-8">
+        <p className="rounded-lg bg-white px-4 py-3 text-sm text-zinc-600 shadow-sm">Loading checkout...</p>
+      </main>
+      <HomeFooter />
+    </div>
+  );
+}
+
+export default function CheckoutPage() {
+  return (
+    <Suspense fallback={<CheckoutPageFallback />}>
+      <CheckoutPageContent />
+    </Suspense>
   );
 }
