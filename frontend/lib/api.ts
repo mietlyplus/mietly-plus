@@ -627,6 +627,30 @@ export async function getAdminMe(token: string) {
   }>;
 }
 
+export async function createAdminAccount(
+  token: string,
+  payload: { email: string; password: string; name?: string }
+) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/auth/create`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Could not create admin." }));
+    throw new Error(error.message || "Could not create admin.");
+  }
+
+  return response.json() as Promise<{
+    message: string;
+    admin: { id: string; name: string; email: string };
+  }>;
+}
+
 export async function fetchPublicBanners(params?: { device?: "desktop" | "mobile"; position?: string }) {
   const query = new URLSearchParams();
   if (params?.device) query.set("device", params.device);

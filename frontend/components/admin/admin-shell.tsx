@@ -22,6 +22,7 @@ const CATALOG_MENU = [
 ];
 
 const BUSINESS_MENU = [
+  { label: "Add Admin", href: "/admin/add-admin" },
   { label: "Subscriptions", href: "/admin/subscriptions" },
   { label: "Settings", href: "/admin/settings" },
 ];

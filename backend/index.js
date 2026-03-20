@@ -1254,6 +1254,49 @@ app.get("/api/admin/auth/me", requireAdminAuth, (req, res) => {
   });
 });
 
+app.post("/api/admin/auth/create", requireAdminAuth, async (req, res) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const password = String(req.body?.password || "").trim();
+  const nameInput = String(req.body?.name || "").trim();
+
+  if (!email || !password) {
+    return res.status(400).json({ message: "email and password are required." });
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: "Please provide a valid email." });
+  }
+
+  if (password.length < 6) {
+    return res.status(400).json({ message: "Password must be at least 6 characters." });
+  }
+
+  const existing = await Admin.findOne({ email }).select("_id").lean();
+  if (existing) {
+    return res.status(409).json({ message: "Admin already exists for this email." });
+  }
+
+  const derivedName = email.split("@")[0] || "Admin";
+  const name = nameInput || derivedName;
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  const admin = await Admin.create({
+    name,
+    email,
+    passwordHash,
+  });
+
+  return res.status(201).json({
+    message: "Admin created successfully.",
+    admin: {
+      id: String(admin._id),
+      name: admin.name,
+      email: admin.email,
+    },
+  });
+});
+
 app.post("/api/uploads/category-image", requireAdminAuth, upload.single("image"), async (req, res) => {
   if (!hasCloudinaryConfig) {
     return res.status(500).json({
