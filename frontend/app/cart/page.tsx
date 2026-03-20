@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ClientNavbar } from "@/components/client-navbar";
 import { HomeFooter } from "@/components/home-footer";
 import { clearCart, getCartItems, removeCartItem, subscribeCartChange, updateCartItemQuantity } from "@/lib/cart";
+import { buildProductPath } from "@/lib/product-path";
 import { CartItem } from "@/lib/types";
 
 function formatAmount(value: number) {
@@ -86,7 +87,10 @@ export default function CartPage() {
                       <img src={item.imageUrl} alt={item.title} className="h-full w-full object-contain" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <Link href={`/product/${item.slug}`} className="line-clamp-2 text-lg font-bold text-zinc-900 hover:text-lime-700">
+                      <Link
+                        href={buildProductPath({ categorySlug: item.categorySlug, productSlug: item.slug })}
+                        className="line-clamp-2 text-lg font-bold text-zinc-900 hover:text-lime-700"
+                      >
                         {item.title}
                       </Link>
                       <p className="mt-1 text-sm text-zinc-600">

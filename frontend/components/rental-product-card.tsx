@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
+import { buildProductPath } from "@/lib/product-path";
 import { Product } from "@/lib/types";
 
 type RentalProductCardProps = {
@@ -69,7 +70,10 @@ export function RentalProductCard({
         </svg>
       </button>
 
-      <Link href={`/product/${product.slug}`} className="block">
+      <Link
+        href={buildProductPath({ categorySlug: product.category?.slug, productSlug: product.slug })}
+        className="block"
+      >
         <div className="px-2.5 pb-2.5 pt-9 md:px-4 md:pb-4 md:pt-12">
           <div className="mx-auto flex h-28 w-full items-center justify-center rounded-lg bg-zinc-50 p-2 md:h-44 md:rounded-xl md:p-3">
             <img

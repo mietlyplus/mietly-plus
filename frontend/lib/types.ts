@@ -243,6 +243,7 @@ export type CartItem = {
   id: string;
   productId: string;
   slug: string;
+  categorySlug?: string;
   title: string;
   imageUrl: string;
   categoryName: string;
