@@ -111,7 +111,7 @@ export function AdminShell({ children }: AdminShellProps) {
       <div className="grid h-screen grid-cols-1 lg:grid-cols-[300px_1fr]">
         <aside className="hidden h-screen flex-col border-r border-white/10 bg-[linear-gradient(180deg,#0d1820_0%,#143141_55%,#102430_100%)] p-5 text-zinc-100 lg:flex">
           <Link href="/" className="admin-brand-panel">
-            <Image src="/logo.png" alt="Mietly logo" width={140} height={44} priority />
+            <Image src="/logo.png" alt="Leihfluss logo" width={140} height={44} priority />
           </Link>
 
           <nav className="mt-6 flex-1 space-y-5 overflow-y-auto pr-1">
@@ -150,7 +150,7 @@ export function AdminShell({ children }: AdminShellProps) {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-[rgb(73,153,173)]">
-                  Mietly Admin
+                  Leihfluss Admin
                 </p>
                 <h1 className="mt-1 truncate text-xl font-black tracking-tight text-zinc-900 md:text-2xl">
                   {pageTitle}

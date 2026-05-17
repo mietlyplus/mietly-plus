@@ -285,7 +285,7 @@ export function ClientNavbar() {
       </div>
       <div className="mx-auto flex w-full max-w-[1280px] items-center gap-3 px-4 py-4 lg:gap-6">
         <Link href="/" className="flex shrink-0 items-center gap-2">
-          <Image src="/logo.png" alt="Mietly logo" width={120} height={40} priority />
+          <Image src="/logo.png" alt="Leihfluss logo" width={120} height={40} priority />
         </Link>
 
         <div className="hidden flex-1 items-center rounded-full border border-[rgba(73,153,173,0.35)] bg-white px-4 py-3 text-[rgb(73,153,173)] md:flex">

@@ -20,7 +20,7 @@ export function AuthShell({ title, description, children }: AuthShellProps) {
               href="/"
               className="mb-7 inline-flex rounded-lg border border-[rgba(73,153,173,0.24)] bg-[rgba(73,153,173,0.08)] px-3 py-1.5"
             >
-              <Image src="/logo.png" alt="Mietly logo" width={112} height={36} priority />
+              <Image src="/logo.png" alt="Leihfluss logo" width={112} height={36} priority />
             </Link>
             <h1 className="text-3xl font-bold tracking-tight text-zinc-900 lg:text-4xl">{title}</h1>
             <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-zinc-600">{description}</p>

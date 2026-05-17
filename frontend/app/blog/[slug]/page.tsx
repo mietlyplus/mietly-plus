@@ -28,7 +28,7 @@ function fallbackTitle(post: BlogPost) {
 }
 
 function fallbackDescription(post: BlogPost) {
-  return post.excerptI18n.en || post.excerptI18n.de || "MietlyPlus blog post";
+  return post.excerptI18n.en || post.excerptI18n.de || "LeihflussPlus blog post";
 }
 
 export async function generateMetadata({
@@ -40,7 +40,7 @@ export async function generateMetadata({
   const post = await getBlogBySlug(resolved.slug);
   if (!post) {
     return {
-      title: "Blog Post | MietlyPlus",
+      title: "Blog Post | LeihflussPlus",
       robots: {
         index: false,
         follow: false,

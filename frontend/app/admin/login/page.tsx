@@ -31,7 +31,7 @@ export default function AdminLoginPage() {
     <main className="admin-login-theme flex min-h-screen items-center justify-center px-4 py-10">
       <div className="w-full max-w-md overflow-hidden rounded-[28px] border border-[rgba(73,153,173,0.25)] bg-white shadow-[0_24px_60px_-36px_rgba(73,153,173,0.85)]">
         <div className="border-b border-[rgba(73,153,173,0.18)] bg-[linear-gradient(120deg,rgba(73,153,173,0.2),rgba(73,153,173,0.06))] px-6 py-6">
-          <Image src="/logo.png" alt="Mietly logo" width={140} height={44} priority />
+          <Image src="/logo.png" alt="Leihfluss logo" width={140} height={44} priority />
           <h1 className="mt-4 text-3xl font-extrabold tracking-tight text-zinc-900">Admin Dashboard</h1>
           <p className="mt-1 text-sm text-zinc-700">Sign in to manage products, orders and settings.</p>
         </div>

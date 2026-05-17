@@ -20,11 +20,11 @@ const pages = {
   blog: {
     en: {
       title: "Blog",
-      body: "Read guides, product updates, and rental tips to get the most value from Mietly.",
+      body: "Read guides, product updates, and rental tips to get the most value from Leihfluss.",
     },
     de: {
       title: "Blog",
-      body: "Lesen Sie Ratgeber, Produkt-Updates und Miettipps, um den größten Nutzen aus Mietly zu ziehen.",
+      body: "Lesen Sie Ratgeber, Produkt-Updates und Miettipps, um den größten Nutzen aus Leihfluss zu ziehen.",
     },
   },
   press: {

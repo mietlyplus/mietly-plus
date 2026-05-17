@@ -314,7 +314,7 @@ function CheckoutPageContent() {
       <main className="mx-auto w-full max-w-[1200px] px-4 py-8">
         <div className="mb-6">
           <Link href="/" className="inline-flex items-center gap-2">
-            <Image src="/logo.png" alt="Mietly logo" width={120} height={40} priority />
+            <Image src="/logo.png" alt="Leihfluss logo" width={120} height={40} priority />
           </Link>
         </div>
 

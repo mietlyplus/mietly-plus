@@ -10,8 +10,12 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "MietlyPlus",
+  title: "LeihflussPlus",
   description: "Rental platform",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({

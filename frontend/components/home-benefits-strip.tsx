@@ -30,7 +30,7 @@
       ),
     },
     {
-      label: "Mietly Care available",
+      label: "Leihfluss Care available",
       icon: (
         <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M4 12a8 8 0 0116 0M7 12v6M17 12v6M7 18h10" />

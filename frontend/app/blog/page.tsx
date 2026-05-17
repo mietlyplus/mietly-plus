@@ -11,14 +11,14 @@ const SITE_BASE_URL =
   "http://localhost:3000";
 
 export const metadata: Metadata = {
-  title: "Blog | MietlyPlus",
-  description: "Insights, rental tips, and product guides from MietlyPlus.",
+  title: "Blog | LeihflussPlus",
+  description: "Insights, rental tips, and product guides from LeihflussPlus.",
   alternates: {
     canonical: `${SITE_BASE_URL}/blog`,
   },
   openGraph: {
-    title: "Blog | MietlyPlus",
-    description: "Insights, rental tips, and product guides from MietlyPlus.",
+    title: "Blog | LeihflussPlus",
+    description: "Insights, rental tips, and product guides from LeihflussPlus.",
     url: `${SITE_BASE_URL}/blog`,
     type: "website",
   },

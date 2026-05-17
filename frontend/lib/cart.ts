@@ -2,8 +2,8 @@
 
 import { CartItem } from "@/lib/types";
 
-const CART_STORAGE_KEY = "mietly_cart";
-const CART_CHANGE_EVENT = "mietly-cart-change";
+const CART_STORAGE_KEY = "leihfluss_cart";
+const CART_CHANGE_EVENT = "leihfluss-cart-change";
 
 function readCartUnsafe(): CartItem[] {
   if (typeof window === "undefined") return [];

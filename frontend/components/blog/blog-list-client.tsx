@@ -23,14 +23,14 @@ function formatDate(value: string | null, locale: "en" | "de") {
 const copy = {
   en: {
     heading: "Blog",
-    subheading: "Insights, rental tips, and product guides from MietlyPlus.",
+    subheading: "Insights, rental tips, and product guides from LeihflussPlus.",
     empty: "No blog posts published yet.",
     readMore: "Read more",
     minutes: "min read",
   },
   de: {
     heading: "Blog",
-    subheading: "Einblicke, Miettipps und Produktleitfaeden von MietlyPlus.",
+    subheading: "Einblicke, Miettipps und Produktleitfaeden von LeihflussPlus.",
     empty: "Noch keine Blogbeitraege veroeffentlicht.",
     readMore: "Weiterlesen",
     minutes: "Min. Lesezeit",

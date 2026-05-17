@@ -7,7 +7,7 @@ import { HomeFooter } from "@/components/home-footer";
 import { submitSupportRequest } from "@/lib/api";
 import { useSiteLocale } from "@/lib/use-site-locale";
 
-const SUPPORT_EMAIL = "support@mietlyplus.de";
+const SUPPORT_EMAIL = "support@leihflussplus.de";
 
 const copy = {
   en: {

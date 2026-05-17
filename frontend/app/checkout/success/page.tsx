@@ -32,13 +32,13 @@ function CheckoutSuccessPageContent() {
       <main className="mx-auto w-full max-w-[820px] px-4 py-10">
         <div className="mb-6">
           <Link href="/" className="inline-flex items-center gap-2">
-            <Image src="/logo.png" alt="Mietly logo" width={120} height={40} priority />
+            <Image src="/logo.png" alt="Leihfluss logo" width={120} height={40} priority />
           </Link>
         </div>
         <section className="rounded-2xl border border-zinc-200 bg-white p-8 text-center">
           <p className="text-4xl font-extrabold text-lime-600">Payment Successful</p>
           <p className="mt-3 text-zinc-700">
-            Your order has been confirmed. Thank you for renting with Mietly.
+            Your order has been confirmed. Thank you for renting with Leihfluss.
           </p>
           {sessionId ? <p className="mt-2 text-xs text-zinc-500">Session ID: {sessionId}</p> : null}
 

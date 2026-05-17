@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useSiteLocale } from "@/lib/use-site-locale";
 
-const COOKIE_CONSENT_STORAGE_KEY = "mietly_cookie_consent_v1";
-const OPEN_COOKIE_SETTINGS_EVENT = "mietly-open-cookie-settings";
+const COOKIE_CONSENT_STORAGE_KEY = "leihfluss_cookie_consent_v1";
+const OPEN_COOKIE_SETTINGS_EVENT = "leihfluss-open-cookie-settings";
 
 type CookieConsent = {
   essential: true;
@@ -99,7 +99,7 @@ function persistConsent(consent: CookieConsent) {
   } catch (error) {
     console.warn("Cookie consent could not be stored in localStorage:", error);
   }
-  window.dispatchEvent(new CustomEvent("mietly-cookie-consent-change", { detail: consent }));
+  window.dispatchEvent(new CustomEvent("leihfluss-cookie-consent-change", { detail: consent }));
 }
 
 function Toggle({

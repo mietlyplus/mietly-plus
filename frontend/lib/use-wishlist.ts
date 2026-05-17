@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { addToWishlist, fetchWishlist, removeFromWishlist } from "@/lib/api";
 import { Product } from "@/lib/types";
 
-const EVENT_NAME = "mietly-wishlist-change";
+const EVENT_NAME = "leihfluss-wishlist-change";
 
 export function useWishlist() {
   const [productIds, setProductIds] = useState<string[]>([]);

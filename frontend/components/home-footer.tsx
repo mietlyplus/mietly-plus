@@ -14,7 +14,7 @@ const copy = {
     language: "English",
     ask: "Got a question or need support?",
     getInTouch: "Get in Touch",
-    rights: "Mietly Deutschland GmbH (c) 2026",
+    rights: "Leihfluss Deutschland GmbH (c) 2026",
     cookie: "Cookie settings",
     privacy: "Privacy Policy",
     terms: "Terms & Conditions",
@@ -24,7 +24,7 @@ const copy = {
     reviewsLabel: "Reviews",
     howItWorks: "How It Works",
     greatConditionPromise: "Great Condition Promise",
-    mietlyCare: "Mietly Care",
+    leihflussCare: "Leihfluss Care",
     sustainability: "Sustainability",
     cancellationPolicy: "Cancellation Policy",
     rentalContract: "Rental Contract",
@@ -37,7 +37,7 @@ const copy = {
     language: "Deutsch",
     ask: "Haben Sie eine Frage oder brauchen Sie Hilfe?",
     getInTouch: "Kontakt",
-    rights: "Mietly Deutschland GmbH (c) 2026",
+    rights: "Leihfluss Deutschland GmbH (c) 2026",
     cookie: "Cookie-Einstellungen",
     privacy: "Datenschutz",
     terms: "AGB",
@@ -47,7 +47,7 @@ const copy = {
     reviewsLabel: "Bewertungen",
     howItWorks: "So funktioniert’s",
     greatConditionPromise: "Qualitätsversprechen",
-    mietlyCare: "Mietly Care",
+    leihflussCare: "Leihfluss Care",
     sustainability: "Nachhaltigkeit",
     cancellationPolicy: "Widerrufsrecht",
     rentalContract: "Mietvertrag",
@@ -87,7 +87,7 @@ export function HomeFooter() {
 
   const openCookieSettings = () => {
     if (typeof window === "undefined") return;
-    window.dispatchEvent(new CustomEvent("mietly-open-cookie-settings"));
+    window.dispatchEvent(new CustomEvent("leihfluss-open-cookie-settings"));
   };
 
   useEffect(() => {
@@ -134,7 +134,7 @@ export function HomeFooter() {
             <ul className="mt-5 space-y-3 text-sm text-zinc-800">
               <li><Link href="/info/how-it-works" className="transition hover:text-[rgb(73,153,173)]">{text.howItWorks}</Link></li>
               <li><Link href="/info/great-condition-promise" className="transition hover:text-[rgb(73,153,173)]">{text.greatConditionPromise}</Link></li>
-              <li><Link href="/info/mietly-care" className="transition hover:text-[rgb(73,153,173)]">{text.mietlyCare}</Link></li>
+              <li><Link href="/info/leihfluss-care" className="transition hover:text-[rgb(73,153,173)]">{text.leihflussCare}</Link></li>
               <li><Link href="/info/sustainability" className="transition hover:text-[rgb(73,153,173)]">{text.sustainability}</Link></li>
               <li><Link href="/help-center?source=help-center" className="transition hover:text-[rgb(73,153,173)]">{text.helpCenter}</Link></li>
               <li><Link href="/info/cancellation-policy" className="transition hover:text-[rgb(73,153,173)]">{text.cancellationPolicy}</Link></li>

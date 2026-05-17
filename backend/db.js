@@ -15,7 +15,7 @@ async function connectDatabase() {
   if (!cachedConnectionPromise) {
     cachedConnectionPromise = mongoose
       .connect(mongoUri, {
-        dbName: process.env.MONGODB_DB_NAME || "mietlyplus",
+        dbName: process.env.MONGODB_DB_NAME || "leihflussplus",
       })
       .catch((error) => {
         cachedConnectionPromise = null;

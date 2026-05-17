@@ -6,24 +6,24 @@ import { useSiteLocale } from "@/lib/use-site-locale";
 
 const copy = {
   en: {
-    eyebrow: "MietlyPlus Highlights",
+    eyebrow: "LeihflussPlus Highlights",
     title: "Built for flexible modern living",
     cta: "Learn more",
     cards: [
       {
         title: "How it works",
-        text: "MietlyPlus gives you access to the products you need without the pressure of a permanent purchase.",
+        text: "LeihflussPlus gives you access to the products you need without the pressure of a permanent purchase.",
         href: "/info/how-it-works",
       },
       {
         title: "Great Condition Promise",
-        text: "Every MietlyPlus product is checked and prepared before delivery for confident everyday use.",
+        text: "Every LeihflussPlus product is checked and prepared before delivery for confident everyday use.",
         href: "/info/great-condition-promise",
       },
       {
-        title: "Mietly Care",
+        title: "Leihfluss Care",
         text: "From preparation and delivery to support and returns, we focus on reliability and simplicity.",
-        href: "/info/mietly-care",
+        href: "/info/leihfluss-care",
       },
       {
         title: "Sustainability",
@@ -33,28 +33,28 @@ const copy = {
     ],
   },
   de: {
-    eyebrow: "MietlyPlus Highlights",
+    eyebrow: "LeihflussPlus Highlights",
     title: "Für flexibles modernes Leben gebaut",
     cta: "Mehr erfahren",
     cards: [
       {
         title: "So funktioniert’s",
-        text: "Mit MietlyPlus nutzt du Produkte flexibel, ohne sie dauerhaft kaufen zu müssen. Einfach, flexibel und alltagstauglich.",
+        text: "Mit LeihflussPlus nutzt du Produkte flexibel, ohne sie dauerhaft kaufen zu müssen. Einfach, flexibel und alltagstauglich.",
         href: "/info/how-it-works",
       },
       {
         title: "Unser Qualitätsversprechen",
-        text: "Jedes Produkt von MietlyPlus wird vor dem Versand geprüft und vorbereitet. So stellen wir sicher, dass unsere Mietprodukte unseren Funktions- und Qualitätsstandards entsprechen.",
+        text: "Jedes Produkt von LeihflussPlus wird vor dem Versand geprüft und vorbereitet. So stellen wir sicher, dass unsere Mietprodukte unseren Funktions- und Qualitätsstandards entsprechen.",
         href: "/info/great-condition-promise",
       },
       {
-        title: "Mietly Care",
-        text: "Mietly Care begleitet das gesamte Mieterlebnis – von der Vorbereitung und Lieferung bis hin zu Support und Rückgabe. Unser Ziel ist ein einfacher, verlässlicher und stressfreier Ablauf.",
-        href: "/info/mietly-care",
+        title: "Leihfluss Care",
+        text: "Leihfluss Care begleitet das gesamte Mieterlebnis – von der Vorbereitung und Lieferung bis hin zu Support und Rückgabe. Unser Ziel ist ein einfacher, verlässlicher und stressfreier Ablauf.",
+        href: "/info/leihfluss-care",
       },
       {
         title: "Nachhaltigkeit",
-        text: "MietlyPlus ermöglicht einen bewussteren Konsum, indem hochwertige Produkte länger sinnvoll genutzt, gepflegt und mehrfach eingesetzt werden.",
+        text: "LeihflussPlus ermöglicht einen bewussteren Konsum, indem hochwertige Produkte länger sinnvoll genutzt, gepflegt und mehrfach eingesetzt werden.",
         href: "/info/sustainability",
       },
     ],
