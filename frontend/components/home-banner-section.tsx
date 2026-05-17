@@ -40,7 +40,9 @@ export function HomeBannerSection() {
         setBanners(data.filter((banner) => banner.device === device));
         setActiveIndex(0);
       })
-      .catch(() => setBanners([]));
+      .catch((error) => {
+        console.error("Failed to load banners:", error);
+      });
   }, [isMobile]);
 
   useEffect(() => {

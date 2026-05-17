@@ -93,7 +93,9 @@ export function HomeFooter() {
   useEffect(() => {
     fetchCategoryTree()
       .then((data) => setTopCategories(data.filter((item) => !item.parentId).slice(0, 8)))
-      .catch(() => setTopCategories([]));
+      .catch((error) => {
+        console.error("Failed to load footer categories:", error);
+      });
   }, []);
 
   return (

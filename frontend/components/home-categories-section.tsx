@@ -14,7 +14,9 @@ export function HomeCategoriesSection() {
   useEffect(() => {
     fetchCategoryTree()
       .then((data) => setCategories(data))
-      .catch(() => setCategories([]));
+      .catch((error) => {
+        console.error("Failed to load categories:", error);
+      });
   }, []);
 
   const categoriesWithImages = useMemo(

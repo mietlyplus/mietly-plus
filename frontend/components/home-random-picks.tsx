@@ -28,7 +28,9 @@ export function HomeRandomPicks() {
         const active = data.filter((item) => item.isActive);
         setProducts(shuffleProducts(active).slice(0, 12));
       })
-      .catch(() => setProducts([]));
+      .catch((error) => {
+        console.error("Failed to load products:", error);
+      });
   }, []);
 
   const showControls = useMemo(() => products.length > 4, [products.length]);

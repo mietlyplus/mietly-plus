@@ -16,7 +16,9 @@ export function HomePopularProducts() {
   useEffect(() => {
     fetchMostPopularProducts()
       .then((data) => setProducts(data))
-      .catch(() => setProducts([]));
+      .catch((error) => {
+        console.error("Failed to load products:", error);
+      });
   }, []);
 
   const showControls = useMemo(() => products.length > 4, [products.length]);

@@ -12,7 +12,9 @@ export function HomeBrandsSlider() {
   useEffect(() => {
     fetchPublicBrands()
       .then((data) => setBrands(data.filter((brand) => brand.isActive)))
-      .catch(() => setBrands([]));
+      .catch((error) => {
+        console.error("Failed to load brands:", error);
+      });
   }, []);
 
   useEffect(() => {

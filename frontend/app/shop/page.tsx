@@ -52,7 +52,9 @@ function ShopPageContent() {
       .then((data) => setProducts(data))
       .catch(() => setError("Could not load products."));
 
-    fetchCategoryTree().then(setCategories).catch(() => setCategories([]));
+    fetchCategoryTree().then(setCategories).catch((error) => {
+        console.error("Failed to load categories:", error);
+      });
   }, []);
 
   useEffect(() => {

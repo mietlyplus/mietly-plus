@@ -1,7 +1,23 @@
 import { Category } from "./types";
 
+function normalizeBaseUrl(value: string | undefined) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/\/+$/, "");
+}
+
+const envApiBaseUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL);
+const envAppBaseUrl = normalizeBaseUrl(process.env.NEXT_PUBLIC_APP_URL);
+const vercelBaseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "";
+const browserOrigin = typeof window !== "undefined" ? window.location.origin : "";
+const isDevelopment = process.env.NODE_ENV !== "production";
+
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000";
+  envApiBaseUrl ||
+  browserOrigin ||
+  envAppBaseUrl ||
+  normalizeBaseUrl(vercelBaseUrl) ||
+  (isDevelopment ? "http://localhost:4000" : "");
 
 export const FALLBACK_CATEGORIES: Category[] = [
   {
@@ -75,4 +91,3 @@ export const FALLBACK_CATEGORIES: Category[] = [
     parentId: null,
   },
 ];
-

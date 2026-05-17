@@ -2,8 +2,14 @@ import { API_BASE_URL, FALLBACK_CATEGORIES } from "./constants";
 import { Banner, BlogPost, Brand, Category, Order, Product, SupportRequest } from "./types";
 
 function buildApiBaseCandidates() {
-  const candidates = [API_BASE_URL, "http://localhost:4000", "http://localhost:5000"];
-  return [...new Set(candidates)];
+  const candidates = [API_BASE_URL];
+  if (typeof window !== "undefined") {
+    candidates.push(window.location.origin);
+  }
+  if (process.env.NODE_ENV !== "production") {
+    candidates.push("http://localhost:4000", "http://localhost:5000");
+  }
+  return [...new Set(candidates.map((base) => String(base || "").replace(/\/+$/, "")).filter(Boolean))];
 }
 
 async function fetchWithPortFallback(path: string, init?: RequestInit) {
@@ -27,7 +33,7 @@ async function fetchWithPortFallback(path: string, init?: RequestInit) {
 
 export async function fetchCategoryTree(): Promise<Category[]> {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/categories?tree=true`, {
+    const response = await fetchWithPortFallback("/api/categories?tree=true", {
       cache: "no-store",
     });
     if (!response.ok) {
