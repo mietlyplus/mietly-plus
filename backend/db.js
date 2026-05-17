@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 
 let cachedConnectionPromise = null;
+const DEFAULT_DB_NAME = "mietlyplus";
 
 async function connectDatabase() {
   const mongoUri = process.env.MONGODB_URI;
@@ -13,9 +14,12 @@ async function connectDatabase() {
   }
 
   if (!cachedConnectionPromise) {
+    const configuredDbName = String(process.env.MONGODB_DB_NAME || "").trim();
+    const dbName = configuredDbName || DEFAULT_DB_NAME;
+
     cachedConnectionPromise = mongoose
       .connect(mongoUri, {
-        dbName: process.env.MONGODB_DB_NAME || "leihfluss",
+        dbName,
       })
       .catch((error) => {
         cachedConnectionPromise = null;
