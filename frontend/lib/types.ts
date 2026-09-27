@@ -260,5 +260,61 @@ export type CartItem = {
   depositEnabled: boolean;
   securityDeposit: number;
   deliveryFee: number;
+  /** Snapshot of the product's rental cap at add-to-cart time. Absent on carts
+   *  saved before this field existed; the checkout quote is authoritative. */
+  maxRentalQuantity?: number;
   addedAt: string;
+};
+
+/** Server-calculated pricing for a cart. The backend is the only source of
+ *  chargeable amounts, so the UI renders these rather than its own arithmetic. */
+export type CheckoutQuoteLimits = {
+  maxQuantity: number;
+  minDuration: number | null;
+  maxDuration: number | null;
+  availableUnits: Array<"week" | "month">;
+};
+
+export type CheckoutQuoteIssue = {
+  lineId: string;
+  productId: string;
+  code: string;
+  message: string;
+};
+
+export type CheckoutQuoteLine = {
+  lineId: string;
+  productId: string;
+  title: string;
+  valid: boolean;
+  limits: CheckoutQuoteLimits | null;
+  issue?: CheckoutQuoteIssue;
+  quantity?: number;
+  durationValue?: number;
+  durationUnit?: "week" | "month";
+  unitPrice?: number;
+  baseUnitPrice?: number;
+  listUnitPrice?: number;
+  depositEnabled?: boolean;
+  securityDeposit?: number;
+  deliveryFee?: number;
+  lineSubtotal?: number;
+  lineDeposit?: number;
+  lineDelivery?: number;
+  lineTotal?: number;
+  verificationRequired?: boolean;
+};
+
+export type CheckoutQuote = {
+  currency: string;
+  lines: CheckoutQuoteLine[];
+  issues: CheckoutQuoteIssue[];
+  totals: {
+    subtotal: number;
+    depositTotal: number;
+    deliveryTotal: number;
+    total: number;
+  };
+  requiresIdentityVerification: boolean;
+  valid: boolean;
 };

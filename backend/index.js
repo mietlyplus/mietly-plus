@@ -20,13 +20,16 @@ const Brand = require("./models/Brand");
 const BlogPost = require("./models/BlogPost");
 const SupportRequest = require("./models/SupportRequest");
 const Order = require("./models/Order");
+const StripeWebhookEvent = require("./models/StripeWebhookEvent");
+const { getProductRentalLimits, priceOrderItem, sumOrderTotals } = require("./lib/pricing");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const upload = multer({ storage: multer.memoryStorage() });
-const JWT_SECRET = process.env.JWT_SECRET || "super_secret_change_me";
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
+const stripeWebhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+const STRIPE_WEBHOOK_PATH = "/api/payments/stripe-webhook";
 const VALID_FULFILLMENT_STATUSES = ["pending", "processing", "shipped", "delivered", "cancelled", "returned"];
 const WEBSITE_CURRENCY = "eur";
 const PRODUCT_IMAGE_PLACEHOLDER =
@@ -85,7 +88,14 @@ if (hasCloudinaryConfig) {
 }
 
 app.use(cors());
-app.use(express.json());
+
+// Stripe signature verification needs the exact bytes Stripe signed, so the
+// webhook route is excluded from JSON parsing and buffered raw instead.
+app.use(STRIPE_WEBHOOK_PATH, express.raw({ type: "*/*", limit: "1mb" }));
+app.use((req, res, next) => {
+  if (req.path === STRIPE_WEBHOOK_PATH) return next();
+  return express.json()(req, res, next);
+});
 
 let appInitPromise = null;
 
@@ -101,6 +111,29 @@ async function initializeApp() {
 }
 
 
+// JWT signing/verification has no safe default. A missing secret must disable
+// authentication entirely rather than fall back to a guessable value. The check
+// is done per request (not at module load) so serverless cold starts and the
+// unauthenticated storefront routes still initialize normally.
+function isJwtSecretConfigured() {
+  return Boolean(String(process.env.JWT_SECRET || "").trim());
+}
+
+function getJwtSecret() {
+  const secret = String(process.env.JWT_SECRET || "").trim();
+  if (!secret) {
+    throw new Error("JWT_SECRET is not configured.");
+  }
+  return secret;
+}
+
+function rejectWhenJwtSecretMissing(res) {
+  if (isJwtSecretConfigured()) return false;
+  console.error("JWT_SECRET is not configured. Authentication is disabled.");
+  res.status(500).json({ message: "Authentication is not configured on the server." });
+  return true;
+}
+
 function buildAdminToken(admin) {
 
   return jwt.sign(
@@ -110,7 +143,7 @@ function buildAdminToken(admin) {
       role: "admin",
       name: admin.name,
     },
-    JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: "7d" }
   );
 }
@@ -123,12 +156,14 @@ function buildUserToken(user) {
       role: "user",
       name: user.name,
     },
-    JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: "7d" }
   );
 }
 
 function requireAdminAuth(req, res, next) {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   const authHeader = req.headers.authorization || "";
   if (!authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ message: "Unauthorized." });
@@ -136,7 +171,7 @@ function requireAdminAuth(req, res, next) {
 
   const token = authHeader.replace("Bearer ", "");
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, getJwtSecret());
     if (payload.role !== "admin") {
       return res.status(403).json({ message: "Forbidden." });
     }
@@ -148,6 +183,8 @@ function requireAdminAuth(req, res, next) {
 }
 
 function requireUserAuth(req, res, next) {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   const authHeader = req.headers.authorization || "";
   if (!authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ message: "Unauthorized." });
@@ -155,7 +192,7 @@ function requireUserAuth(req, res, next) {
 
   const token = authHeader.replace("Bearer ", "");
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, getJwtSecret());
     if (payload.role !== "user") {
       return res.status(403).json({ message: "Forbidden." });
     }
@@ -1230,6 +1267,8 @@ app.delete("/api/admin/brands/:id", requireAdminAuth, async (req, res) => {
 });
 
 app.post("/api/admin/auth/login", async (req, res) => {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   const email = String(req.body?.email || "").trim().toLowerCase();
   const password = String(req.body?.password || "").trim();
   if (!email || !password) {
@@ -2479,6 +2518,8 @@ app.post("/api/auth/signup/request-otp", async (req, res) => {
 });
 
 app.post("/api/auth/signup/verify-otp", async (req, res) => {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   const email = String(req.body?.email || "").trim().toLowerCase();
   const otp = String(req.body?.otp || "").trim();
 
@@ -2549,6 +2590,8 @@ app.post("/api/auth/signup", async (req, res) => {
 });
 
 app.post("/api/auth/signin", async (req, res) => {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   const email = String(req.body?.email || "").trim().toLowerCase();
   const password = String(req.body?.password || "").trim();
   if (!email || !password) {
@@ -2584,6 +2627,8 @@ app.post("/api/auth/signin", async (req, res) => {
 });
 
 app.post("/api/auth/google", async (req, res) => {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   const credential = String(req.body?.credential || req.body?.idToken || "").trim();
   if (!credential) {
     return res.status(400).json({ message: "Google credential is required." });
@@ -2800,6 +2845,221 @@ app.post("/api/payments/identity-session", requireUserAuth, async (req, res) => 
   });
 });
 
+function formatRentalPeriodLabel(durationValue, durationUnit) {
+  const plural = durationValue === 1 ? "" : "s";
+  return `${durationValue} ${durationUnit}${plural}`;
+}
+
+function isValidStartDate(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
+  const parsed = new Date(`${raw}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime());
+}
+
+// Fields required to price a line and to snapshot it onto the order.
+const CHECKOUT_PRODUCT_FIELDS = [
+  "title",
+  "slug",
+  "imageUrl",
+  "brand",
+  "isActive",
+  "monthlyPrice",
+  "buyerPrice",
+  "offerPrice",
+  "monthlyBuyerPrice",
+  "monthlyOfferPrice",
+  "minimumRentalMonths",
+  "maximumRentalMonths",
+  "minimumRentalWeeks",
+  "maximumRentalWeeks",
+  "minimumRentalDays",
+  "maximumRentalDays",
+  "maxRentalQuantity",
+  "deliveryFee",
+  "depositEnabled",
+  "securityDeposit",
+  "verificationRequired",
+  "categoryId",
+  "brandId",
+].join(" ");
+
+// Reads the non-chargeable intent out of a cart payload. Amount-bearing fields
+// in the request are deliberately not looked at here or anywhere downstream.
+function parseCartIntent(items, { requireStartDate }) {
+  const requestedLines = [];
+  const errors = [];
+
+  items.forEach((item, index) => {
+    const position = index + 1;
+    const productId = String(item?.productId || "").trim();
+    const lineId = String(item?.id || item?.lineId || "").trim() || `line-${position}`;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      errors.push({
+        lineId,
+        productId,
+        code: "INVALID_PRODUCT_REFERENCE",
+        message: `Cart line ${position} is missing a valid product reference.`,
+      });
+      return;
+    }
+
+    const startDate = String(item?.startDate || "").trim();
+    if (requireStartDate && !isValidStartDate(startDate)) {
+      errors.push({
+        lineId,
+        productId,
+        code: "INVALID_START_DATE",
+        message: `Cart line ${position} needs a valid delivery date (YYYY-MM-DD).`,
+      });
+      return;
+    }
+
+    requestedLines.push({
+      lineId,
+      productId,
+      startDate,
+      periodUnit: item?.durationUnit ?? item?.periodUnit,
+      durationValue: item?.durationValue,
+      quantity: item?.quantity,
+    });
+  });
+
+  return { requestedLines, errors };
+}
+
+async function loadCartProducts(requestedLines) {
+  const productIds = [...new Set(requestedLines.map((line) => line.productId))];
+  if (productIds.length === 0) return new Map();
+
+  const products = await Product.find({ _id: { $in: productIds } })
+    .select(CHECKOUT_PRODUCT_FIELDS)
+    .populate("categoryId", "name slug")
+    .populate("brandId", "name slug")
+    .lean();
+
+  return new Map(products.map((product) => [String(product._id), product]));
+}
+
+function buildProductSnapshot(product) {
+  const rawCategory = product.categoryId;
+  const rawBrand = product.brandId;
+  return {
+    productId: String(product._id),
+    title: String(product.title || ""),
+    slug: String(product.slug || ""),
+    imageUrl: String(product.imageUrl || ""),
+    categoryName:
+      rawCategory && typeof rawCategory === "object" ? String(rawCategory.name?.en || "") : "",
+    brandName:
+      String(product.brand || "") ||
+      (rawBrand && typeof rawBrand === "object" ? String(rawBrand.name || "") : ""),
+  };
+}
+
+// Single pricing pass shared by the quote endpoint and checkout. `lines` is
+// always one entry per requested line (valid or not) so a client can render the
+// authoritative state of the whole cart; `pricedItems` holds only valid lines.
+function priceCartLines(requestedLines, productById) {
+  const lines = [];
+  const pricedItems = [];
+  const errors = [];
+
+  for (const line of requestedLines) {
+    const product = productById.get(line.productId) || null;
+    const limits = getProductRentalLimits(product, line.periodUnit);
+    const priced = priceOrderItem(product, {
+      periodUnit: line.periodUnit,
+      durationValue: line.durationValue,
+      quantity: line.quantity,
+    });
+
+    if (!priced.ok) {
+      const issue = {
+        lineId: line.lineId,
+        productId: line.productId,
+        code: priced.error.code,
+        message: priced.error.message,
+      };
+      errors.push(issue);
+      lines.push({
+        lineId: line.lineId,
+        productId: line.productId,
+        title: product ? String(product.title || "") : "",
+        valid: false,
+        limits,
+        issue,
+      });
+      continue;
+    }
+
+    const snapshot = buildProductSnapshot(product);
+    const pricedItem = { ...priced.item, ...snapshot, startDate: line.startDate };
+    pricedItems.push(pricedItem);
+
+    lines.push({
+      lineId: line.lineId,
+      ...snapshot,
+      valid: true,
+      limits,
+      quantity: pricedItem.quantity,
+      durationValue: pricedItem.durationValue,
+      durationUnit: pricedItem.durationUnit,
+      unitPrice: pricedItem.unitPrice,
+      baseUnitPrice: pricedItem.baseUnitPrice,
+      listUnitPrice: pricedItem.listUnitPrice,
+      depositEnabled: pricedItem.depositEnabled,
+      securityDeposit: pricedItem.securityDeposit,
+      deliveryFee: pricedItem.deliveryFee,
+      lineSubtotal: pricedItem.lineSubtotal,
+      lineDeposit: pricedItem.lineDeposit,
+      lineDelivery: pricedItem.lineDelivery,
+      lineTotal: pricedItem.lineTotal,
+      verificationRequired: pricedItem.verificationRequired,
+    });
+  }
+
+  return { lines, pricedItems, errors };
+}
+
+// Read-only pricing preview. The storefront calls this to show the same amounts
+// the server will charge, and to clamp quantities/durations to the limits the
+// server enforces. Public because it exposes nothing beyond catalogue data.
+app.post("/api/payments/checkout-quote", async (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+
+  if (items.length === 0) {
+    return res.json({
+      currency: WEBSITE_CURRENCY,
+      lines: [],
+      issues: [],
+      totals: { subtotal: 0, depositTotal: 0, deliveryTotal: 0, total: 0 },
+      requiresIdentityVerification: false,
+      valid: true,
+    });
+  }
+
+  if (items.length > 50) {
+    return res.status(400).json({ message: "Too many cart items." });
+  }
+
+  const { requestedLines, errors: intentErrors } = parseCartIntent(items, { requireStartDate: false });
+  const productById = await loadCartProducts(requestedLines);
+  const { lines, pricedItems, errors } = priceCartLines(requestedLines, productById);
+  const issues = [...intentErrors, ...errors];
+  const totals = sumOrderTotals(pricedItems);
+
+  return res.json({
+    currency: WEBSITE_CURRENCY,
+    lines,
+    issues,
+    totals,
+    requiresIdentityVerification: pricedItems.some((item) => item.verificationRequired),
+    valid: issues.length === 0 && pricedItems.length === items.length,
+  });
+});
+
 app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => {
   if (!stripe) {
     return res.status(500).json({ message: "Stripe is not configured." });
@@ -2814,6 +3074,10 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
   const shippingAddressRaw = req.body?.shippingAddress || {};
   if (items.length === 0) {
     return res.status(400).json({ message: "Cart items are required." });
+  }
+
+  if (items.length > 50) {
+    return res.status(400).json({ message: "Too many cart items." });
   }
 
   const shippingAddress = {
@@ -2838,122 +3102,53 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
     return res.status(400).json({ message: "Shipping address is required." });
   }
 
-  const normalizedItems = items
-    .map((item) => {
-      const title = String(item?.title || "").trim();
-      const quantity = Math.max(1, Number(item?.quantity) || 1);
-      const amount = Number(item?.unitPrice) || 0;
-      const baseUnitPrice = Number(item?.baseUnitPrice) || amount;
-      const durationLabel = String(item?.durationLabel || "").trim();
-      const durationValue = Math.max(1, Number(item?.durationValue) || 1);
-      const durationUnit = ["day", "week", "month"].includes(String(item?.durationUnit))
-        ? String(item?.durationUnit)
-        : "week";
-      const startDate = String(item?.startDate || "").trim();
-      const depositEnabled = Boolean(item?.depositEnabled);
-      const securityDeposit = depositEnabled ? Number(item?.securityDeposit) || 0 : 0;
-      const deliveryFee = Math.max(0, Number(item?.deliveryFee) || 0);
-      const productId = String(item?.productId || "").trim();
-      const slug = String(item?.slug || "").trim();
-      const imageUrl = String(item?.imageUrl || "").trim();
-      const categoryName = String(item?.categoryName || "").trim();
-      const brandName = String(item?.brandName || "").trim();
+  // Only non-chargeable intent is read from the request. Every amount below is
+  // derived from the persisted product, so a tampered client payload cannot
+  // change what the customer is charged.
+  const { requestedLines, errors: intentErrors } = parseCartIntent(items, { requireStartDate: true });
+  const productById = await loadCartProducts(requestedLines);
+  const { lines, pricedItems, errors } = priceCartLines(requestedLines, productById);
+  const issues = [...intentErrors, ...errors];
 
-      if (!title || amount <= 0) return null;
+  if (issues.length > 0) {
+    // Same shape as the quote endpoint so the client can re-render the cart
+    // against authoritative limits instead of just showing a flat error.
+    return res.status(400).json({
+      message: issues[0].message,
+      issues,
+      lines,
+      currency: WEBSITE_CURRENCY,
+    });
+  }
 
-      const lineSubtotal = amount * quantity;
-      const lineDeposit = securityDeposit * quantity;
-      return {
-        productId,
-        title,
-        slug,
-        imageUrl,
-        categoryName,
-        brandName,
-        quantity,
-        unitPrice: amount,
-        baseUnitPrice,
-        durationValue,
-        durationUnit,
-        startDate,
-        depositEnabled,
-        securityDeposit,
-        deliveryFee,
-        lineSubtotal,
-        lineDeposit,
-        lineDelivery: 0,
-        lineTotal: lineSubtotal + lineDeposit,
-        currency: WEBSITE_CURRENCY,
-        durationLabel,
-      };
-    })
-    .filter(Boolean);
-
-  if (normalizedItems.length === 0) {
+  if (pricedItems.length === 0) {
     return res.status(400).json({ message: "No valid cart line items found." });
   }
 
-  const productIds = [
-    ...new Set(
-      normalizedItems
-        .map((item) => String(item.productId || "").trim())
-        .filter((id) => mongoose.Types.ObjectId.isValid(id))
-    ),
-  ];
-
-  const products = productIds.length
-    ? await Product.find({ _id: { $in: productIds } }).select("_id verificationRequired deliveryFee").lean()
-    : [];
-  const productById = new Map(products.map((product) => [String(product._id), product]));
-
-  const itemsWithDelivery = normalizedItems.map((item) => {
-    const productId = String(item.productId || "").trim();
-    const product = mongoose.Types.ObjectId.isValid(productId) ? productById.get(productId) : null;
-    const deliveryFeeFromProduct = product ? Math.max(0, Number(product.deliveryFee) || 0) : null;
-    const deliveryFee = deliveryFeeFromProduct ?? Math.max(0, Number(item.deliveryFee) || 0);
-    const lineDelivery = deliveryFee * item.quantity;
-    return {
-      ...item,
-      deliveryFee,
-      lineDelivery,
-      lineTotal: item.lineSubtotal + item.lineDeposit + lineDelivery,
-    };
-  });
-
-  const requiresIdentityVerification = itemsWithDelivery.some((item) => {
-    const productId = String(item.productId || "").trim();
-    if (!mongoose.Types.ObjectId.isValid(productId)) return true;
-    const product = productById.get(productId);
-    if (!product) return true;
-    return product.verificationRequired !== false;
-  });
-
+  const requiresIdentityVerification = pricedItems.some((item) => item.verificationRequired);
   if (requiresIdentityVerification && !user.identityVerified) {
     return res.status(403).json({
       message: "Identity verification is required for one or more selected products.",
     });
   }
 
-  const lineItems = itemsWithDelivery
-    .map((item) => {
-      const perUnitTotal = item.unitPrice + item.securityDeposit + item.deliveryFee;
-      return {
-        quantity: item.quantity,
-        price_data: {
-          currency: WEBSITE_CURRENCY,
-          unit_amount: Math.round(perUnitTotal * 100),
-          product_data: {
-            name: item.title,
-            description: item.durationLabel ? `Rental period: ${item.durationLabel}` : undefined,
-          },
-        },
-      };
-    });
+  const totals = sumOrderTotals(pricedItems);
+  if (totals.total <= 0) {
+    return res.status(400).json({ message: "Order total must be greater than zero." });
+  }
 
-  const subtotal = itemsWithDelivery.reduce((sum, item) => sum + item.lineSubtotal, 0);
-  const depositTotal = itemsWithDelivery.reduce((sum, item) => sum + item.lineDeposit, 0);
-  const deliveryTotal = itemsWithDelivery.reduce((sum, item) => sum + item.lineDelivery, 0);
-  const total = subtotal + depositTotal + deliveryTotal;
+  const lineItems = pricedItems.map((item) => ({
+    quantity: item.quantity,
+    price_data: {
+      currency: WEBSITE_CURRENCY,
+      unit_amount: Math.round(item.perUnitChargeable * 100),
+      product_data: {
+        name: item.title,
+        description: `Rental period: ${formatRentalPeriodLabel(item.durationValue, item.durationUnit)}`,
+      },
+    },
+  }));
+
   const orderNumber = buildOrderNumber();
   const order = await Order.create({
     orderNumber,
@@ -2964,8 +3159,8 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
       phone: user.phone || "",
     },
     shippingAddress,
-    items: itemsWithDelivery.map((item) => ({
-      productId: /^[a-f\d]{24}$/i.test(item.productId || "") ? item.productId : null,
+    items: pricedItems.map((item) => ({
+      productId: item.productId,
       title: item.title,
       slug: item.slug,
       imageUrl: item.imageUrl,
@@ -2986,10 +3181,10 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
       lineTotal: item.lineTotal,
     })),
     currency: WEBSITE_CURRENCY,
-    subtotal,
-    depositTotal,
-    deliveryTotal,
-    total,
+    subtotal: totals.subtotal,
+    depositTotal: totals.depositTotal,
+    deliveryTotal: totals.deliveryTotal,
+    total: totals.total,
     status: "pending_payment",
     fulfillmentStatus: "pending",
     paymentStatus: "unpaid",
@@ -3030,9 +3225,165 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
     url: checkoutSession.url,
     orderId: String(order._id),
     orderNumber: order.orderNumber,
+    // Server-calculated amounts, so the client can reconcile what it displayed.
+    currency: WEBSITE_CURRENCY,
+    subtotal: totals.subtotal,
+    depositTotal: totals.depositTotal,
+    deliveryTotal: totals.deliveryTotal,
+    total: totals.total,
   });
 });
 
+// Single place where an order transitions to paid. Safe to call repeatedly:
+// the paymentStatus guard makes a redelivered webhook or a page refresh a no-op.
+async function applyPaidCheckoutSession(order, checkoutSession) {
+  if (order.paymentStatus === "paid") {
+    return { changed: false, order };
+  }
+
+  order.status = "paid";
+  order.fulfillmentStatus = order.fulfillmentStatus === "pending" ? "processing" : order.fulfillmentStatus;
+  order.paymentStatus = "paid";
+  order.stripePaymentIntentId = String(checkoutSession?.payment_intent || order.stripePaymentIntentId || "");
+  order.paymentConfirmedAt = new Date();
+  await order.save();
+
+  return { changed: true, order };
+}
+
+async function markCheckoutSessionUnpaid(order) {
+  if (order.paymentStatus === "paid") {
+    return { changed: false, order };
+  }
+  if (order.status === "pending_payment") {
+    return { changed: false, order };
+  }
+
+  order.status = "pending_payment";
+  order.fulfillmentStatus = "pending";
+  order.paymentStatus = "unpaid";
+  await order.save();
+  return { changed: true, order };
+}
+
+function extractCheckoutSessionId(stripeEvent) {
+  const object = stripeEvent?.data?.object || {};
+  return String(object.id || "").trim();
+}
+
+// Stripe needs the exact signed bytes. Express gives us a Buffer via
+// express.raw; some serverless runtimes parse the body first, so fall back to
+// whatever raw representation is available and fail closed if there is none.
+function getStripeRawBody(req) {
+  if (Buffer.isBuffer(req.body)) return req.body;
+  if (Buffer.isBuffer(req.rawBody)) return req.rawBody;
+  if (typeof req.rawBody === "string") return Buffer.from(req.rawBody, "utf8");
+  return null;
+}
+
+app.post(STRIPE_WEBHOOK_PATH, async (req, res) => {
+  if (!stripe) {
+    return res.status(500).json({ message: "Stripe is not configured." });
+  }
+
+  if (!stripeWebhookSecret) {
+    console.error("Stripe webhook received but STRIPE_WEBHOOK_SECRET is not configured.");
+    return res.status(500).json({ message: "Stripe webhook secret is not configured." });
+  }
+
+  const signature = req.headers["stripe-signature"];
+  const rawBody = getStripeRawBody(req);
+
+  if (!signature || !rawBody) {
+    console.error("Stripe webhook rejected: missing signature or raw request body.");
+    return res.status(400).json({ message: "Invalid Stripe webhook request." });
+  }
+
+  let stripeEvent;
+  try {
+    stripeEvent = stripe.webhooks.constructEvent(rawBody, signature, stripeWebhookSecret);
+  } catch (error) {
+    console.error("Stripe webhook signature verification failed:", error.message);
+    return res.status(400).json({ message: "Invalid Stripe webhook signature." });
+  }
+
+  const relevantTypes = [
+    "checkout.session.completed",
+    "checkout.session.async_payment_succeeded",
+    "checkout.session.async_payment_failed",
+    "checkout.session.expired",
+  ];
+
+  if (!relevantTypes.includes(stripeEvent.type)) {
+    return res.json({ received: true, ignored: true });
+  }
+
+  // Claim the event id before doing any work. The unique index means a
+  // concurrent or replayed delivery loses the race and exits without
+  // reprocessing, which keeps the handler idempotent.
+  try {
+    await StripeWebhookEvent.create({
+      eventId: stripeEvent.id,
+      type: stripeEvent.type,
+    });
+  } catch (error) {
+    if (error && error.code === 11000) {
+      return res.json({ received: true, duplicate: true });
+    }
+    console.error("Stripe webhook bookkeeping failed:", error.message);
+    return res.status(500).json({ message: "Could not record Stripe webhook event." });
+  }
+
+  try {
+    const sessionId = extractCheckoutSessionId(stripeEvent);
+    if (!sessionId) {
+      return res.json({ received: true, ignored: true });
+    }
+
+    const order = await Order.findOne({ stripeCheckoutSessionId: sessionId });
+    if (!order) {
+      console.warn(`Stripe webhook ${stripeEvent.type} had no matching order for session ${sessionId}.`);
+      return res.json({ received: true, matched: false });
+    }
+
+    await StripeWebhookEvent.updateOne({ eventId: stripeEvent.id }, { $set: { orderId: order._id } });
+
+    const sessionObject = stripeEvent.data.object || {};
+
+    if (
+      stripeEvent.type === "checkout.session.completed" ||
+      stripeEvent.type === "checkout.session.async_payment_succeeded"
+    ) {
+      if (sessionObject.payment_status === "paid") {
+        await applyPaidCheckoutSession(order, sessionObject);
+      }
+      return res.json({ received: true });
+    }
+
+    if (stripeEvent.type === "checkout.session.async_payment_failed") {
+      await markCheckoutSessionUnpaid(order);
+      return res.json({ received: true });
+    }
+
+    if (stripeEvent.type === "checkout.session.expired" && order.paymentStatus !== "paid") {
+      order.status = "cancelled";
+      order.fulfillmentStatus = "cancelled";
+      await order.save();
+      return res.json({ received: true });
+    }
+
+    return res.json({ received: true });
+  } catch (error) {
+    // Release the idempotency claim so Stripe's retry can reprocess the event.
+    await StripeWebhookEvent.deleteOne({ eventId: stripeEvent.id }).catch(() => {});
+    console.error("Stripe webhook processing failed:", error.message);
+    return res.status(500).json({ message: "Stripe webhook processing failed." });
+  }
+});
+
+// Advisory only. The webhook is the source of truth for payment state; this
+// endpoint lets the success page reflect status promptly (and covers the window
+// before a webhook lands) without being the only path that can mark an order paid.
 app.post("/api/payments/checkout-confirm", requireUserAuth, async (req, res) => {
   if (!stripe) {
     return res.status(500).json({ message: "Stripe is not configured." });
@@ -3048,7 +3399,6 @@ app.post("/api/payments/checkout-confirm", requireUserAuth, async (req, res) => 
     return res.status(404).json({ message: "User not found." });
   }
 
-  const checkoutSession = await stripe.checkout.sessions.retrieve(sessionId);
   const order = await Order.findOne({
     stripeCheckoutSessionId: sessionId,
     userId: user._id,
@@ -3058,21 +3408,21 @@ app.post("/api/payments/checkout-confirm", requireUserAuth, async (req, res) => 
     return res.status(404).json({ message: "Order not found for this checkout session." });
   }
 
+  if (order.paymentStatus === "paid") {
+    return res.json({
+      message: "Order payment confirmed.",
+      order: mapOrder(order),
+    });
+  }
+
+  const checkoutSession = await stripe.checkout.sessions.retrieve(sessionId);
+
   if (checkoutSession.payment_status !== "paid") {
-    if (order.status !== "pending_payment") {
-      order.status = "pending_payment";
-      order.fulfillmentStatus = "pending";
-      order.paymentStatus = "unpaid";
-      await order.save();
-    }
+    await markCheckoutSessionUnpaid(order);
     return res.status(409).json({ message: "Payment is not completed yet." });
   }
 
-  order.status = "paid";
-  order.fulfillmentStatus = order.fulfillmentStatus === "pending" ? "processing" : order.fulfillmentStatus;
-  order.paymentStatus = "paid";
-  order.stripePaymentIntentId = String(checkoutSession.payment_intent || "");
-  await order.save();
+  await applyPaidCheckoutSession(order, checkoutSession);
 
   return res.json({
     message: "Order payment confirmed.",
@@ -3175,6 +3525,16 @@ async function startServer() {
       console.warn("SMTP is not fully configured. Email notifications are disabled.");
     }
 
+    if (!isJwtSecretConfigured()) {
+      console.error("JWT_SECRET is not configured. Signin, signup and all admin routes will return 500.");
+    }
+
+    if (stripe && !stripeWebhookSecret) {
+      console.warn(
+        "STRIPE_WEBHOOK_SECRET is not configured. Stripe webhooks will be rejected and orders will only be confirmed by the success page."
+      );
+    }
+
     const reminderIntervalMs = Math.max(10, Number(process.env.RENTAL_REMINDER_INTERVAL_MINUTES || 60)) * 60 * 1000;
     const runSweep = async () => {
       try {
@@ -3201,3 +3561,5 @@ module.exports.default = app;
 module.exports.app = app;
 module.exports.initializeApp = initializeApp;
 module.exports.runRentalEndingReminderSweep = runRentalEndingReminderSweep;
+module.exports.applyPaidCheckoutSession = applyPaidCheckoutSession;
+module.exports.markCheckoutSessionUnpaid = markCheckoutSessionUnpaid;

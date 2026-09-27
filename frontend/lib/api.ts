@@ -1,5 +1,5 @@
 import { API_BASE_URL, FALLBACK_CATEGORIES } from "./constants";
-import { Banner, BlogPost, Brand, Category, Order, Product, SupportRequest } from "./types";
+import { Banner, BlogPost, Brand, Category, CheckoutQuote, Order, Product, SupportRequest } from "./types";
 
 function buildApiBaseCandidates() {
   const candidates = [API_BASE_URL];
@@ -1190,27 +1190,46 @@ export async function createIdentityVerificationSession(token: string) {
   return response.json() as Promise<{ verified: boolean; sessionId?: string; url?: string }>;
 }
 
+/** Asks the backend to price the cart. The response is authoritative: the UI
+ *  displays these amounts and clamps to these limits rather than trusting the
+ *  values cached in localStorage. */
+export async function fetchCheckoutQuote(
+  items: Array<{
+    id: string;
+    productId: string;
+    quantity: number;
+    durationValue: number;
+    durationUnit: "day" | "week" | "month";
+    startDate?: string;
+  }>
+): Promise<CheckoutQuote> {
+  const response = await fetchWithPortFallback("/api/payments/checkout-quote", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Could not price the cart." }));
+    throw new Error(error.message || "Could not price the cart.");
+  }
+
+  return (await response.json()) as CheckoutQuote;
+}
+
 export async function createCheckoutSession(
   token: string,
   payload: {
+    // Non-chargeable intent only. The backend derives every amount from the
+    // product record and ignores any price supplied here.
     items: Array<{
-      productId?: string;
-      slug?: string;
-      imageUrl?: string;
-      categoryName?: string;
-      brandName?: string;
-      title: string;
+      id?: string;
+      productId: string;
       quantity: number;
-      unitPrice: number;
-      baseUnitPrice?: number;
-      durationValue?: number;
-      durationUnit?: "day" | "week" | "month";
-      startDate?: string;
-      depositEnabled?: boolean;
-      securityDeposit?: number;
-      deliveryFee?: number;
-      durationLabel?: string;
-      currency?: string;
+      durationValue: number;
+      durationUnit: "day" | "week" | "month";
+      startDate: string;
     }>;
     shippingAddress: {
       fullName: string;
@@ -1238,7 +1257,17 @@ export async function createCheckoutSession(
     throw new Error(error.message || "Could not create checkout session.");
   }
 
-  return response.json() as Promise<{ id: string; url: string; orderId: string; orderNumber: string }>;
+  return response.json() as Promise<{
+    id: string;
+    url: string;
+    orderId: string;
+    orderNumber: string;
+    currency: string;
+    subtotal: number;
+    depositTotal: number;
+    deliveryTotal: number;
+    total: number;
+  }>;
 }
 
 export async function confirmCheckoutSession(token: string, payload: { sessionId: string }) {

@@ -27,6 +27,24 @@ export function getCartItems() {
   return readCartUnsafe();
 }
 
+/** The cap the storefront can enforce locally. `maxRentalQuantity` is a snapshot
+ *  taken at add-to-cart time, so it can be missing (older carts) or stale; the
+ *  server quote is what finally decides. Missing means "unknown", not "1", so a
+ *  cart saved before this field existed is never silently clamped. */
+export function getCartItemMaxQuantity(item: Pick<CartItem, "maxRentalQuantity">) {
+  const max = Number(item.maxRentalQuantity);
+  if (!Number.isFinite(max) || max < 1) return null;
+  return Math.floor(max);
+}
+
+function clampQuantity(quantity: number, maxQuantity: number | null) {
+  const parsed = Math.floor(Number(quantity));
+  // A cleared number input yields NaN; fall back to 1 rather than storing it.
+  const floor = Number.isFinite(parsed) ? Math.max(1, parsed) : 1;
+  if (maxQuantity === null) return floor;
+  return Math.min(floor, maxQuantity);
+}
+
 export function getCartCount() {
   return readCartUnsafe().reduce((sum, item) => sum + Math.max(1, item.quantity || 1), 0);
 }
@@ -42,14 +60,18 @@ export function addCartItem(item: Omit<CartItem, "id" | "addedAt">) {
   );
 
   if (existingIndex >= 0) {
+    const merged = { ...items[existingIndex], ...item };
     items[existingIndex] = {
-      ...items[existingIndex],
-      ...item,
-      quantity: items[existingIndex].quantity + Math.max(1, item.quantity || 1),
+      ...merged,
+      quantity: clampQuantity(
+        items[existingIndex].quantity + Math.max(1, item.quantity || 1),
+        getCartItemMaxQuantity(merged)
+      ),
     };
   } else {
     items.push({
       ...item,
+      quantity: clampQuantity(item.quantity || 1, getCartItemMaxQuantity(item)),
       id: `${item.productId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       addedAt: new Date().toISOString(),
     });
@@ -64,9 +86,33 @@ export function removeCartItem(itemId: string) {
 }
 
 export function updateCartItemQuantity(itemId: string, quantity: number) {
-  const nextQty = Math.max(1, Math.floor(quantity));
-  const items = readCartUnsafe().map((item) => (item.id === itemId ? { ...item, quantity: nextQty } : item));
+  const items = readCartUnsafe().map((item) =>
+    item.id === itemId
+      ? { ...item, quantity: clampQuantity(quantity, getCartItemMaxQuantity(item)) }
+      : item
+  );
   writeCartUnsafe(items);
+}
+
+/** Applies the server's authoritative limits to the stored cart, clamping any
+ *  quantity that exceeds the current cap. Returns true if anything changed. */
+export function applyCartLimits(limitsByLineId: Record<string, number>) {
+  const items = readCartUnsafe();
+  let changed = false;
+
+  const next = items.map((item) => {
+    const maxQuantity = limitsByLineId[item.id];
+    if (!Number.isFinite(maxQuantity) || maxQuantity < 1) return item;
+
+    const clamped = Math.min(Math.max(1, Math.floor(item.quantity)), Math.floor(maxQuantity));
+    if (clamped === item.quantity && item.maxRentalQuantity === maxQuantity) return item;
+
+    changed = true;
+    return { ...item, quantity: clamped, maxRentalQuantity: Math.floor(maxQuantity) };
+  });
+
+  if (changed) writeCartUnsafe(next);
+  return changed;
 }
 
 export function clearCart() {
