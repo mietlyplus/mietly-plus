@@ -3421,7 +3421,7 @@ async function claimStripeEvent(stripeEvent, orderId) {
       claimedAt: { $lte: staleBefore },
     },
     { $set: { claimedAt: new Date(), orderId: orderId || existing.orderId || null } },
-    { new: true }
+    { returnDocument: "after" }
   );
 
   if (takenOver) {
