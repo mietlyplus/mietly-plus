@@ -17,8 +17,11 @@ const draftImageSchema = new mongoose.Schema(
     providerId: { type: String, default: "", trim: true },
     model: { type: String, default: "", trim: true },
     isFixture: { type: Boolean, default: false },
-    status: { type: String, enum: ["pending", "ready", "failed"], default: "ready" },
+    status: { type: String, enum: ["pending", "generating", "ready", "failed"], default: "ready" },
     error: { type: String, default: "", trim: true },
+    // Lease for an in-flight generation, so a duplicate request cannot pay for
+    // the same image twice.
+    generationStartedAt: { type: Date, default: null },
   },
   { _id: true }
 );
@@ -67,6 +70,21 @@ const productDraftSchema = new mongoose.Schema(
     images: { type: [draftImageSchema], default: [] },
     warnings: { type: [warningSchema], default: [] },
 
+    // Once a product is published, draft edits are held here instead of being
+    // written straight to the live Product. They reach the storefront only when
+    // the owner explicitly applies the revision.
+    pendingRevision: {
+      hasChanges: { type: Boolean, default: false },
+      listing: { type: mongoose.Schema.Types.Mixed, default: null },
+      images: { type: [draftImageSchema], default: [] },
+      imagesChanged: { type: Boolean, default: false },
+      updatedAt: { type: Date, default: null },
+    },
+
+    // Heartbeat for the create/resume job, so a request killed mid-flight can
+    // be detected and resumed instead of stranding the draft.
+    jobLeaseAt: { type: Date, default: null },
+
     // Read-only provenance, shown to the admin so every fact can be traced.
     provenance: {
       extractedFacts: { type: mongoose.Schema.Types.Mixed, default: null },
@@ -88,6 +106,9 @@ const productDraftSchema = new mongoose.Schema(
 
     // Guards against a double-tap on the phone creating two drafts.
     submissionKey: { type: String, default: "", trim: true, index: true },
+
+    // Set when the owner accepts reusing a retailer's own photography.
+    sourceImageryConfirmed: { type: Boolean, default: false },
 
     publishedAt: { type: Date, default: null },
     publishedByAdminId: { type: mongoose.Schema.Types.ObjectId, ref: "Admin", default: null },

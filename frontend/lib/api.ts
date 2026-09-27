@@ -1451,11 +1451,44 @@ export async function regenerateDraftText(adminToken: string, draftId: string, i
   );
 }
 
-export async function publishProductDraft(adminToken: string, draftId: string) {
+export async function publishProductDraft(
+  adminToken: string,
+  draftId: string,
+  options: { confirmSourceImagery?: boolean } = {}
+) {
   return adminJson<{ message: string; draft: ProductDraft }>(
     `/api/admin/product-drafts/${encodeURIComponent(draftId)}/publish`,
     adminToken,
-    { method: "POST", body: JSON.stringify({ confirm: true }) }
+    { method: "POST", body: JSON.stringify({ confirm: true, ...options }) }
+  );
+}
+
+/** Finishes a draft whose initial generation failed or was interrupted. */
+export async function resumeProductDraft(adminToken: string, draftId: string) {
+  return adminJson<ProductDraft>(`/api/admin/product-drafts/${encodeURIComponent(draftId)}/resume`, adminToken, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+/** Applies a pending revision to an already-published product. */
+export async function applyDraftRevision(
+  adminToken: string,
+  draftId: string,
+  options: { confirmSourceImagery?: boolean } = {}
+) {
+  return adminJson<{ message: string; draft: ProductDraft }>(
+    `/api/admin/product-drafts/${encodeURIComponent(draftId)}/apply-revision`,
+    adminToken,
+    { method: "POST", body: JSON.stringify({ confirm: true, ...options }) }
+  );
+}
+
+export async function discardDraftRevision(adminToken: string, draftId: string) {
+  return adminJson<{ message: string; draft: ProductDraft }>(
+    `/api/admin/product-drafts/${encodeURIComponent(draftId)}/discard-revision`,
+    adminToken,
+    { method: "POST", body: "{}" }
   );
 }
 

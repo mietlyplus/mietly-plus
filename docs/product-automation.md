@@ -60,8 +60,9 @@ workflow.
 | Variable | Purpose |
 |---|---|
 | `GEMINI_API_KEY` | Enables the real Gemini text + image providers. |
-| `GEMINI_TEXT_MODEL` | Default `gemini-2.5-flash`. |
-| `GEMINI_IMAGE_MODEL` | Default `gemini-2.5-flash-image`. |
+| `GEMINI_TEXT_MODEL` | Default `gemini-3.8-flash`. |
+| `GEMINI_IMAGE_MODEL` | Default `gemini-3.1-flash-image`. |
+| `AI_TEXT_TIMEOUT_MS` / `AI_IMAGE_TIMEOUT_MS` | Provider deadline, default 30 s. |
 | `AI_TEXT_PROVIDER` / `AI_IMAGE_PROVIDER` | `gemini` (default) or `fixture`. |
 
 **Without `GEMINI_API_KEY` the system runs on DEV FIXTURE providers.** Fixture
@@ -79,3 +80,36 @@ be published** — the backend refuses both fixture images and fixture text.
 - Fetching refuses non-http(s) schemes, private/loopback/link-local/metadata
   addresses, redirect chains into private space, oversized bodies and slow hosts.
   Login walls and bot protection are reported, never bypassed.
+
+
+## After publication
+
+A published listing does not change when you edit the draft. Regenerated text,
+replaced, deleted or reordered images are held as a **pending revision**; the
+storefront keeps serving the version you approved until you press **Apply to
+live listing**. You can also discard the revision and keep what is live.
+
+The same rules are enforced from the ordinary product editor: an AI-origin
+product cannot be switched to active there while it would fail the draft checks.
+
+## If generation fails
+
+Nothing is lost. The URL, both prices, your instruction and your uploaded photos
+are stored before any provider is called, so a failed or interrupted job is
+finished with **Resume generation** rather than re-entered. A job whose request
+was killed mid-flight becomes resumable once its lease expires.
+
+## Runtime budget
+
+The deployed function ceiling is 60 s. Provider calls are capped at 30 s so the
+remainder covers reference downloads, Cloudinary upload and persisting the
+result or the error. Each image is generated in its own request, holds a lease
+so a duplicate request cannot pay twice, and a storage failure retries the
+upload rather than discarding an image that has already been paid for.
+
+## Verification before production
+
+Mocked runs are not sufficient evidence. Before asking for production approval,
+verify with real credentials in an isolated environment: extraction from a
+reachable product page, real AI text, five real generated images, media storage,
+and the approval/revision behaviour.

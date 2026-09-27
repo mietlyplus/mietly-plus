@@ -16,10 +16,20 @@
 
 const { buildListingPrompt } = require("./prompts");
 
-const GEMINI_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
-const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
+// Verified against ai.google.dev/gemini-api/docs/pricing on 2026-09-27.
+// The 2.5 Flash Image lane retires on 2026-10-02, so it is NOT a safe default.
+const GEMINI_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-3.8-flash";
+const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
-const REQUEST_TIMEOUT_MS = 55_000;
+
+// The deployed function ceiling is 60s (backend/vercel.json). A provider call
+// must leave room for the work that follows it in the same request -- reference
+// downloads, Cloudinary upload, and persisting the result or the error -- so the
+// provider never gets the whole budget.
+const FUNCTION_BUDGET_MS = 60_000;
+const PERSIST_RESERVE_MS = 12_000;
+const TEXT_TIMEOUT_MS = Number(process.env.AI_TEXT_TIMEOUT_MS || 30_000);
+const IMAGE_TIMEOUT_MS = Number(process.env.AI_IMAGE_TIMEOUT_MS || 30_000);
 
 class ProviderError extends Error {
   constructor(code, message, { retryable = false } = {}) {
@@ -50,10 +60,11 @@ function parseJsonLoose(text) {
   }
 }
 
-async function geminiFetch(path, body) {
+async function geminiFetch(path, body, timeoutMs) {
   const key = geminiApiKey();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const budget = Math.min(Number(timeoutMs) || TEXT_TIMEOUT_MS, FUNCTION_BUDGET_MS - PERSIST_RESERVE_MS);
+  const timer = setTimeout(() => controller.abort(), budget);
 
   try {
     const response = await fetch(`${GEMINI_API_BASE}${path}`, {
@@ -95,10 +106,14 @@ const geminiTextProvider = {
 
   async generateListing(input) {
     const prompt = buildListingPrompt(input);
-    const payload = await geminiFetch(`/models/${GEMINI_TEXT_MODEL}:generateContent`, {
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.4, responseMimeType: "application/json" },
-    });
+    const payload = await geminiFetch(
+      `/models/${GEMINI_TEXT_MODEL}:generateContent`,
+      {
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.4, responseMimeType: "application/json" },
+      },
+      TEXT_TIMEOUT_MS
+    );
 
     const text = (payload?.candidates?.[0]?.content?.parts || [])
       .map((part) => part.text || "")
@@ -128,9 +143,11 @@ async function geminiImageCall(brief, references) {
 
   const parts = [{ text: `${guard}\n\nBRIEF: ${brief.prompt}` }, ...referenceParts(references)];
 
-  const payload = await geminiFetch(`/models/${GEMINI_IMAGE_MODEL}:generateContent`, {
-    contents: [{ role: "user", parts }],
-  });
+  const payload = await geminiFetch(
+    `/models/${GEMINI_IMAGE_MODEL}:generateContent`,
+    { contents: [{ role: "user", parts }] },
+    IMAGE_TIMEOUT_MS
+  );
 
   const imagePart = (payload?.candidates?.[0]?.content?.parts || []).find((part) => part.inlineData?.data);
   if (!imagePart) {
@@ -185,7 +202,11 @@ function describeProviders() {
 }
 
 module.exports = {
+  FUNCTION_BUDGET_MS,
+  IMAGE_TIMEOUT_MS,
+  PERSIST_RESERVE_MS,
   ProviderError,
+  TEXT_TIMEOUT_MS,
   describeProviders,
   geminiImageProvider,
   geminiTextProvider,

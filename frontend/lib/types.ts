@@ -273,7 +273,7 @@ export type ProductDraftImage = {
   prompt: string;
   providerId: string;
   isFixture: boolean;
-  status: "pending" | "ready" | "failed";
+  status: "pending" | "generating" | "ready" | "failed";
   error: string;
 };
 
@@ -300,6 +300,24 @@ export type ProductDraft = {
     text: { id: string; model: string; real: boolean };
     image: { id: string; model: string; real: boolean };
   };
+  imageCompleteness: {
+    target: number;
+    ready: number;
+    missing: number;
+    complete: boolean;
+    failed: number;
+    pending: number;
+    hasReference: boolean;
+    byOrigin: { user: number; source: number; ai: number; fixture: number };
+    reasons: string[];
+  };
+  pendingRevision: {
+    hasChanges: boolean;
+    imagesChanged: boolean;
+    hasListing: boolean;
+    updatedAt: string | null;
+  };
+  sourceImageryConfirmed: boolean;
   provenance: {
     retailerPrice: { amount: number; currency: string } | null;
     extractionConfidence: string;
@@ -315,6 +333,9 @@ export type ProductDraft = {
   recoverable?: boolean;
   imageError?: string;
   textError?: string;
+  alreadyComplete?: boolean;
+  resumeRequired?: boolean;
+  requiresSourceImageryConfirmation?: boolean;
 };
 
 export type AiProviderStatus = {

@@ -221,11 +221,100 @@ async function fetchSourceDocument(rawUrl, { fetchImpl = fetch } = {}) {
   throw new SourceFetchError("TOO_MANY_REDIRECTS", "That page redirected too many times.");
 }
 
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Fetches a reference image with the same SSRF guarantees as a page fetch.
+ *
+ * Redirects are followed manually so EVERY hop is re-validated against public
+ * IP space; the size cap is enforced while streaming, so an oversized body is
+ * abandoned rather than buffered; and a single deadline covers the body read,
+ * not just the response headers.
+ */
+async function fetchImageWithLimits(rawUrl, { fetchImpl = fetch, maxBytes = MAX_IMAGE_BYTES, timeoutMs = TIMEOUT_MS } = {}) {
+  let currentUrl = await assertPublicUrl(rawUrl);
+  const deadline = Date.now() + timeoutMs;
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new SourceFetchError("TIMEOUT", "That image took too long to download.");
+    }
+
+    const controller = new AbortController();
+    // One deadline for headers AND body, so a slow trickle cannot stall us.
+    const timer = setTimeout(() => controller.abort(), remaining);
+
+    let response;
+    try {
+      response = await fetchImpl(currentUrl.toString(), {
+        redirect: "manual",
+        signal: controller.signal,
+        headers: { "User-Agent": USER_AGENT, Accept: "image/*" },
+      });
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) throw new SourceFetchError("BAD_REDIRECT", "That image redirected without a destination.");
+        if (hop === MAX_REDIRECTS) throw new SourceFetchError("TOO_MANY_REDIRECTS", "That image redirected too many times.");
+        // Re-validate the destination before connecting to it.
+        currentUrl = await assertPublicUrl(new URL(location, currentUrl).toString());
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new SourceFetchError("HTTP_ERROR", `That image returned HTTP ${response.status}.`);
+      }
+
+      const contentType = String(response.headers.get("content-type") || "").split(";")[0].trim();
+      if (!/^image\//i.test(contentType)) {
+        throw new SourceFetchError("UNSUPPORTED_CONTENT_TYPE", "That URL is not an image.");
+      }
+
+      const declared = Number(response.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > maxBytes) {
+        throw new SourceFetchError("RESPONSE_TOO_LARGE", "That image is too large.");
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new SourceFetchError("NETWORK_ERROR", "That image could not be read.");
+
+      const chunks = [];
+      let total = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > maxBytes) {
+          // Abandon mid-stream rather than buffering the whole body.
+          await reader.cancel().catch(() => {});
+          throw new SourceFetchError("RESPONSE_TOO_LARGE", "That image is too large.");
+        }
+        chunks.push(value);
+      }
+
+      return { buffer: Buffer.concat(chunks), mimeType: contentType, finalUrl: currentUrl.toString() };
+    } catch (error) {
+      if (error instanceof SourceFetchError) throw error;
+      if (error?.name === "AbortError") {
+        throw new SourceFetchError("TIMEOUT", "That image took too long to download.");
+      }
+      throw new SourceFetchError("NETWORK_ERROR", "That image could not be downloaded.");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw new SourceFetchError("TOO_MANY_REDIRECTS", "That image redirected too many times.");
+}
+
 module.exports = {
   SourceFetchError,
   assertPublicUrl,
+  fetchImageWithLimits,
   fetchSourceDocument,
   isBlockedAddress,
+  MAX_IMAGE_BYTES,
   MAX_BYTES,
   MAX_REDIRECTS,
   TIMEOUT_MS,

@@ -102,9 +102,16 @@ introduce a second catalogue, product model, or editor.
 - `ProductDraft` holds only AI provenance: job steps, warnings, image origins
   and which provider produced what.
 - **Publication is enforced on the backend** (`POST .../publish` with
-  `confirm: true`). Hiding a button is never the control.
+  `confirm: true`), and the same rules run from the ordinary product editor, so
+  an AI-origin listing cannot be activated through the older path. See
+  `backend/lib/publication-rules.js`. Hiding a button is never the control.
 - **Fixture content can never be published** — neither fixture images nor
   fixture-generated text.
+- **A published listing is immutable until re-approved.** Edits to a live
+  product are held on `draft.pendingRevision` and reach the storefront only via
+  `POST .../apply-revision`. Never write straight to a published Product.
+- **Reused retailer photography needs an explicit confirmation** before it can
+  go live.
 
 ### Invariants — do not regress
 - **The owner's rental prices are authoritative.** Weekly maps to `buyerPrice`,
@@ -152,8 +159,19 @@ It is not yours — do not let it block a commit, and do not fix it as a drive-b
 
 ---
 
-## 6. Not in scope yet
+## 6. Priorities
 
-Weekly blog automation is the **next** milestone. Do not start it, and do not
-fold in payment redesign, site redesign, admin placeholder pages or general
-security cleanup unless asked.
+1. **Product link → approved listing** automation.
+2. **Continued CSV/XLSX support.**
+3. **Website changes through the owner's prompts**, via the loop in §1.
+
+Anything else — payment redesign, site redesign, admin placeholder pages,
+general security cleanup — is out of scope unless the owner asks for it.
+
+## 7. Verification before production
+
+Never ask for production approval on the strength of mocked runs. Before
+requesting it, verify in an isolated environment with real credentials:
+extraction from a genuinely reachable product page, real AI text, real image
+generation to the five-image target, media storage, and the approval and
+revision behaviour. State plainly which evidence is real and which is mocked.

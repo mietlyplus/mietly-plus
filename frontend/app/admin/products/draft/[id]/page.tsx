@@ -4,11 +4,14 @@ import { ChangeEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
+  applyDraftRevision,
+  discardDraftRevision,
   discardProductDraft,
   fetchProductDraft,
   generateDraftImage,
   publishProductDraft,
   regenerateDraftText,
+  resumeProductDraft,
   updateDraftImages,
   uploadProductImage,
 } from "@/lib/api";
@@ -92,15 +95,43 @@ export default function ProductDraftReviewPage() {
     });
   };
 
-  const onPublish = async () => {
+  const onPublish = async (confirmSourceImagery = false) => {
     if (!token) return;
     if (!window.confirm("Publish this product to the live Leihfluss catalogue?")) return;
-    await run("publish", async () => {
-      const result = await publishProductDraft(token, draftId);
+    setBusy("publish");
+    setError("");
+    setMessage("");
+    try {
+      const result = await publishProductDraft(token, draftId, { confirmSourceImagery });
+      setMessage(result.message);
+      setDraft(result.draft);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Publishing failed.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const onResume = () =>
+    run("resume", async () => {
+      const next = await resumeProductDraft(token, draftId);
+      setMessage(next.productId ? "Generation finished." : "Still incomplete — try again.");
+      return next;
+    });
+
+  const onApplyRevision = () =>
+    run("revision", async () => {
+      const result = await applyDraftRevision(token, draftId, { confirmSourceImagery: true });
       setMessage(result.message);
       return result.draft;
     });
-  };
+
+  const onDiscardRevision = () =>
+    run("revision", async () => {
+      const result = await discardDraftRevision(token, draftId);
+      setMessage(result.message);
+      return result.draft;
+    });
 
   const onDiscard = async () => {
     if (!token) return;
@@ -118,6 +149,10 @@ export default function ProductDraftReviewPage() {
   const product = draft.product;
   const fixtureImages = draft.images.filter((image) => image.isFixture);
   const published = draft.status === "published";
+  const completeness = draft.imageCompleteness;
+  const reusedSourceImages = draft.images.filter((image) => image.origin === "source" && image.url).length;
+  const needsResume = !draft.productId;
+  const hasPendingRevision = draft.pendingRevision?.hasChanges;
 
   return (
     <section className="mx-auto w-full max-w-3xl space-y-5">
@@ -165,6 +200,52 @@ export default function ProductDraftReviewPage() {
         </dl>
       </div>
 
+      {needsResume ? (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-semibold">Generation did not finish</p>
+          <p className="mt-1">
+            Your link, both prices, instruction and uploaded photos are saved. Resume to finish — you do not need to
+            start again.
+          </p>
+          <button type="button" onClick={onResume} disabled={Boolean(busy)}
+            className="mt-2 rounded-lg bg-[rgb(73,153,173)] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+            {busy === "resume" ? "Resuming…" : "Resume generation"}
+          </button>
+        </div>
+      ) : null}
+
+      {published && hasPendingRevision ? (
+        <div className="rounded-xl border border-sky-300 bg-sky-50 p-4 text-sm text-sky-900">
+          <p className="font-semibold">Unapproved changes</p>
+          <p className="mt-1">
+            The live listing still shows the version you approved. These edits reach customers only when you apply them.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" onClick={onApplyRevision} disabled={Boolean(busy)}
+              className="rounded-lg bg-[rgb(73,153,173)] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+              {busy === "revision" ? "Working…" : "Apply to live listing"}
+            </button>
+            <button type="button" onClick={onDiscardRevision} disabled={Boolean(busy)}
+              className="rounded-lg border border-sky-400 bg-white px-4 py-2 text-sm font-semibold text-sky-900">
+              Discard changes
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {completeness && !completeness.complete ? (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-semibold">
+            {completeness.ready} of {completeness.target} images ready — this listing is not complete
+          </p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {completeness.reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {draft.warnings.length > 0 ? (
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
           <h3 className="text-sm font-bold text-amber-900">Review these before publishing</h3>
@@ -178,7 +259,16 @@ export default function ProductDraftReviewPage() {
 
       <div className="rounded-xl border border-zinc-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-bold text-zinc-900">Images ({draft.images.length}/5)</h3>
+          <div>
+            <h3 className="font-bold text-zinc-900">
+              Images — {completeness?.ready ?? 0}/{completeness?.target ?? 5} ready
+            </h3>
+            <p className="text-xs text-zinc-500">
+              {completeness?.byOrigin.user ?? 0} yours · {completeness?.byOrigin.ai ?? 0} generated ·{" "}
+              {completeness?.byOrigin.source ?? 0} reused from the retailer ·{" "}
+              {completeness?.byOrigin.fixture ?? 0} fixture
+            </p>
+          </div>
           {draft.images.length < 5 ? (
             <label className="cursor-pointer rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-semibold">
               Add photo
@@ -286,6 +376,21 @@ export default function ProductDraftReviewPage() {
         </div>
       ) : null}
 
+      {reusedSourceImages > 0 && !draft.sourceImageryConfirmed ? (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-semibold">
+            {reusedSourceImages} image(s) are reused from the retailer&apos;s page
+          </p>
+          <p className="mt-1">
+            Confirm you have the right to use them, or replace them with your own photos before publishing.
+          </p>
+          <button type="button" disabled={Boolean(busy)} onClick={() => onPublish(true)}
+            className="mt-2 rounded-lg border border-amber-500 bg-white px-3 py-1.5 text-sm font-semibold text-amber-900">
+            I have the right to use these — publish
+          </button>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
         <button type="button" disabled={Boolean(busy) || published}
           onClick={() => run("text", () => regenerateDraftText(token, draftId, draft.instruction))}
@@ -293,7 +398,7 @@ export default function ProductDraftReviewPage() {
           {busy === "text" ? "Regenerating…" : "Regenerate text"}
         </button>
         <button type="button" disabled={Boolean(busy) || published || fixtureImages.length > 0}
-          onClick={onPublish}
+          onClick={() => onPublish(false)}
           className="rounded-lg bg-[rgb(73,153,173)] px-4 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
           {busy === "publish" ? "Publishing…" : published ? "Published" : "Approve & Publish"}
         </button>
