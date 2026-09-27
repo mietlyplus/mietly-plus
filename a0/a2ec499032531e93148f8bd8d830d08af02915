@@ -1,0 +1,61 @@
+backend/lib/ai/providers.js
+  s_755b8269fb6f42::t_a0714f2ed4bd94 19-22,24-32,63,66-67,109-116,146-150,205-207,209
+backend/lib/source/fetch-source.js
+  s_755b8269fb6f42::t_4754c505943d41 224-310,314,317
+backend/lib/publication-rules.js
+  s_755b8269fb6f42::t_ff947ad2ef899a 1-107
+backend/lib/source/fetch-source.test.js
+  s_755b8269fb6f42::t_387f9573e7118f 6-8,155-295
+frontend/lib/types.ts
+  s_755b8269fb6f42::t_9a6b5d9aaf29a1 276,303-320,336-338
+backend/models/ProductDraft.js
+  s_755b8269fb6f42::t_d64dbdf44d0344 20,22-24,73-87,110-111
+  s_755b8269fb6f42::t_7a06ee77e8eb2b 112
+frontend/app/admin/products/draft/[id]/page.tsx
+  s_755b8269fb6f42::t_61e04fe4383da8 7-8,14,98,101-131,152-155,203-248,262-271,379-393,401
+backend/index.js
+  s_755b8269fb6f42::t_b5b730a8ae2ffc 2355-2356,2359-2360,2368-2371,2374-2385,2409-2413
+  s_755b8269fb6f42::t_ea852e004d79c5 2516,2757-2767,2791,2800-2813,2816,2818,2824
+  s_755b8269fb6f42::t_a3d30cc5dad9b6 2447-2454,2904-2911,2953-2964,3122-3128,3131,3134
+  s_755b8269fb6f42::t_5ab74dbc917d47 2513-2515,2517-2528,2568,2642,2656-2723,2725-2740
+  s_755b8269fb6f42::t_344aeefc91e48e 2305-2334
+  s_755b8269fb6f42::t_6c0bcd135922d3 2978-3079,3083,3085,3098-3104
+  s_755b8269fb6f42::t_c193e9b892eae0 2648,2724,3080-3082,3084,3086-3097
+  s_755b8269fb6f42::t_4a68f4a4e07830 3135
+docs/product-automation.md
+  s_755b8269fb6f42::t_933c1a47e0ed05 63-65,83-115
+backend/integration/product-automation.test.js
+  s_755b8269fb6f42::t_c193e9b892eae0 264-291
+  s_755b8269fb6f42::t_39f6abbe88a61d 88-91
+  s_755b8269fb6f42::t_a1e34b14b7a8bc 1-87,92-263,292-550
+backend/integration/fixtures/product-pages.js
+  s_755b8269fb6f42::t_a3c9689b0e11bf 1-28
+backend/package.json
+  s_755b8269fb6f42::t_45473b8bae3418 34-36
+  s_755b8269fb6f42::t_c3bcd82eae9b3d 7-8
+CLAUDE.md
+  s_755b8269fb6f42::t_933c1a47e0ed05 105-107,110-114,162,164-177
+backend/integration/fixtures/csv-rows.js
+  s_755b8269fb6f42::t_eeacea0fb70534 44
+  s_755b8269fb6f42::t_a3c9689b0e11bf 1-43,45-101
+frontend/lib/api.ts
+  s_755b8269fb6f42::t_9a6b5d9aaf29a1 1454-1458,1462-1491
+backend/package-lock.json
+  s_755b8269fb6f42::t_9de308e1b0ef30 22-27,31-33,67-76,83-192,296-308,321-327,521-530,574-580,602-654,775-788,878-890,939-964,1085-1170,1287-1299,1351-1389,1399-1408,1419-1438,1557-1559,1723-1734,1764-1796,1818-1824,1896-1908
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "a0a2ec499032531e93148f8bd8d830d08af02915",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-opus-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
