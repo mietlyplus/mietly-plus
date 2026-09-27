@@ -202,6 +202,7 @@ export default function ProductDetailsPage() {
       depositEnabled: Boolean(product.depositEnabled),
       securityDeposit: Number(product.securityDeposit || 0),
       deliveryFee: Number(product.deliveryFee || 0),
+      maxRentalQuantity: Math.max(1, Number(product.maxRentalQuantity) || 1),
     });
     setCartFeedback("Added to cart.");
     window.setTimeout(() => setCartFeedback(""), 2500);

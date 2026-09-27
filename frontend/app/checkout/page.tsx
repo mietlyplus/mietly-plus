@@ -7,14 +7,16 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ClientNavbar } from "@/components/client-navbar";
 import { HomeFooter } from "@/components/home-footer";
 import {
+  CheckoutPriceChangedError,
   createCheckoutSession,
   createIdentityVerificationSession,
+  fetchCheckoutQuote,
   fetchIdentityStatus,
   getCurrentUser,
   updateUserProfile,
 } from "@/lib/api";
-import { getCartItems } from "@/lib/cart";
-import { CartItem } from "@/lib/types";
+import { applyCartLimits, getCartItems } from "@/lib/cart";
+import { CartItem, CheckoutQuote } from "@/lib/types";
 
 type Step = 1 | 2 | 3;
 
@@ -61,6 +63,12 @@ function CheckoutPageContent() {
   const [token, setToken] = useState("");
   const [currentStep, setCurrentStep] = useState<Step>(1);
   const [items, setItems] = useState<CartItem[]>([]);
+  const [quote, setQuote] = useState<CheckoutQuote | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(true);
+  const [quoteError, setQuoteError] = useState("");
+  // Set when the server refuses a charge because pricing moved. Forces the
+  // customer to acknowledge the new total before Pay can be pressed again.
+  const [repriceNotice, setRepriceNotice] = useState("");
   const [identityVerified, setIdentityVerified] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
   const [verificationLoading, setVerificationLoading] = useState(false);
@@ -138,28 +146,82 @@ function CheckoutPageContent() {
       });
   }, [hydrated, router, token]);
 
-  const subtotal = useMemo(
-    () => items.reduce((sum, item) => sum + item.unitPrice * Math.max(1, item.quantity), 0),
-    [items]
-  );
-  const depositTotal = useMemo(
+  // The checkout summary must never show an amount other than what Stripe will
+  // charge, so totals come from the server quote. The locally cached cart values
+  // are only used to detect that a price moved since add-to-cart.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (items.length === 0) {
+      setQuote(null);
+      setQuoteLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setQuoteLoading(true);
+    fetchCheckoutQuote(
+      items.map((item) => ({
+        id: item.id,
+        productId: item.productId,
+        quantity: item.quantity,
+        durationValue: item.durationValue,
+        durationUnit: item.durationUnit,
+        startDate: item.startDate,
+      }))
+    )
+      .then((result) => {
+        if (cancelled) return;
+        setQuote(result);
+        setQuoteError("");
+
+        const limits: Record<string, number> = {};
+        result.lines.forEach((line) => {
+          if (line.limits?.maxQuantity) limits[line.lineId] = line.limits.maxQuantity;
+        });
+        if (applyCartLimits(limits)) setItems(getCartItems());
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setQuote(null);
+        setQuoteError(err instanceof Error ? err.message : "Could not price your cart.");
+      })
+      .finally(() => {
+        if (!cancelled) setQuoteLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, items]);
+
+  const quoteLineById = useMemo(() => {
+    const map = new Map<string, CheckoutQuote["lines"][number]>();
+    quote?.lines.forEach((line) => map.set(line.lineId, line));
+    return map;
+  }, [quote]);
+
+  const cachedTotal = useMemo(
     () =>
-      items.reduce(
-        (sum, item) =>
-          sum + (item.depositEnabled ? Number(item.securityDeposit || 0) * Math.max(1, item.quantity) : 0),
-        0
-      ),
+      items.reduce((sum, item) => {
+        const quantity = Math.max(1, item.quantity);
+        const deposit = item.depositEnabled ? Number(item.securityDeposit || 0) : 0;
+        return sum + (item.unitPrice + deposit + Number(item.deliveryFee || 0)) * quantity;
+      }, 0),
     [items]
   );
-  const deliveryTotal = useMemo(
-    () => items.reduce((sum, item) => sum + Number(item.deliveryFee || 0) * Math.max(1, item.quantity), 0),
-    [items]
-  );
-  const grandTotal = subtotal + depositTotal + deliveryTotal;
-  const requiresIdentityVerification = useMemo(
-    () => items.some((item) => item.verificationRequired !== false),
-    [items]
-  );
+
+  const subtotal = quote?.totals.subtotal ?? 0;
+  const depositTotal = quote?.totals.depositTotal ?? 0;
+  const deliveryTotal = quote?.totals.deliveryTotal ?? 0;
+  const grandTotal = quote?.totals.total ?? 0;
+
+  const priceChanged = Boolean(quote) && Math.abs(grandTotal - cachedTotal) >= 0.01;
+  const quoteIssues = quote?.issues ?? [];
+  const cartIsPayable = quote !== null && quote.valid && grandTotal > 0;
+
+  const requiresIdentityVerification = quote
+    ? quote.requiresIdentityVerification
+    : items.some((item) => item.verificationRequired !== false);
   const checkoutSteps = useMemo(
     () =>
       requiresIdentityVerification
@@ -263,6 +325,14 @@ function CheckoutPageContent() {
       setError("Your cart is empty.");
       return;
     }
+    if (quoteLoading) {
+      setError("Still confirming prices. Please try again in a moment.");
+      return;
+    }
+    if (!cartIsPayable) {
+      setError(quoteIssues[0]?.message || quoteError || "Your cart could not be priced.");
+      return;
+    }
     if (requiresIdentityVerification && !identityVerified) {
       setError("Please complete identity verification first.");
       return;
@@ -276,32 +346,36 @@ function CheckoutPageContent() {
     setPaying(true);
     setError("");
     setMessage("");
+    setRepriceNotice("");
     try {
       const session = await createCheckoutSession(token, {
+        // Precondition only. The server recalculates from the database and
+        // refuses with 409 if this no longer matches; it never sets the price.
+        expectedTotal: grandTotal,
+        // Intent only. Prices, deposits and delivery fees are resolved server-side
+        // from the product record, so sending them here would be meaningless.
         items: items.map((item) => ({
+          id: item.id,
           productId: item.productId,
-          slug: item.slug,
-          imageUrl: item.imageUrl,
-          categoryName: item.categoryName,
-          brandName: item.brandName,
-          title: item.title,
           quantity: Math.max(1, item.quantity),
-          unitPrice: item.unitPrice,
-          baseUnitPrice: item.baseUnitPrice,
           durationValue: item.durationValue,
           durationUnit: item.durationUnit,
           startDate: item.startDate,
-          depositEnabled: item.depositEnabled,
-          securityDeposit: item.securityDeposit,
-          deliveryFee: item.deliveryFee,
-          durationLabel: durationText(item.durationValue, item.durationUnit),
-          currency: "eur",
         })),
         shippingAddress: selectedAddress,
       });
       if (!session.url) throw new Error("Stripe checkout URL not returned.");
       window.location.href = session.url;
     } catch (err) {
+      if (err instanceof CheckoutPriceChangedError) {
+        // Do not redirect. Show the server's new total and make the customer
+        // confirm it explicitly before another attempt.
+        setQuote(err.quote);
+        setRepriceNotice(err.message);
+        setPaying(false);
+        return;
+      }
+
       setError(err instanceof Error ? err.message : "Could not start checkout.");
       setPaying(false);
     }
@@ -542,13 +616,54 @@ function CheckoutPageContent() {
                     ? "Proceed to secure Stripe payment."
                     : "Verification is not required for selected products. Proceed to secure Stripe payment."}
                 </p>
+                {repriceNotice ? (
+                  <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                    <p className="font-semibold">{repriceNotice}</p>
+                    <p className="mt-1">
+                      Updated total: <span className="font-bold">EUR {formatAmount(grandTotal)}</span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setRepriceNotice("")}
+                      className="mt-2 rounded-md border border-amber-400 bg-white px-3 py-1.5 text-sm font-semibold text-amber-900"
+                    >
+                      Review and continue
+                    </button>
+                  </div>
+                ) : null}
+
+                {quoteIssues.length > 0 ? (
+                  <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                    <p className="font-semibold">Please fix these items in your cart first:</p>
+                    <ul className="mt-1 list-disc pl-5">
+                      {quoteIssues.map((issue) => (
+                        <li key={`${issue.lineId}-${issue.code}`}>{issue.message}</li>
+                      ))}
+                    </ul>
+                    <Link href="/cart" className="mt-2 inline-flex text-sm font-semibold underline">
+                      Go to cart
+                    </Link>
+                  </div>
+                ) : null}
+
                 <button
                   type="button"
                   onClick={onPayNow}
-                  disabled={paying || items.length === 0 || (requiresIdentityVerification && !identityVerified)}
+                  disabled={
+                    paying ||
+                    quoteLoading ||
+                    Boolean(repriceNotice) ||
+                    !cartIsPayable ||
+                    items.length === 0 ||
+                    (requiresIdentityVerification && !identityVerified)
+                  }
                   className="mt-4 rounded-lg bg-[rgb(73,153,173)] px-4 py-2 text-sm font-bold text-white transition hover:bg-[rgb(60,138,158)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {paying ? "Redirecting to Stripe Checkout..." : "Checkout & Pay"}
+                  {paying
+                    ? "Redirecting to Stripe Checkout..."
+                    : quoteLoading
+                      ? "Confirming prices..."
+                      : `Checkout & Pay EUR ${formatAmount(grandTotal)}`}
                 </button>
               </article>
             ) : null}
@@ -560,20 +675,44 @@ function CheckoutPageContent() {
               <p className="mt-3 text-sm text-zinc-500">Your cart is empty.</p>
             ) : (
               <>
+                {quoteLoading ? (
+                  <p className="mt-3 text-xs font-semibold text-zinc-500">Confirming current prices...</p>
+                ) : null}
+
+                {priceChanged ? (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    Pricing changed since you added these items. The total below is what you will be charged.
+                  </div>
+                ) : null}
+
+                {quoteError ? (
+                  <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                    {quoteError}
+                  </div>
+                ) : null}
+
                 <div className="mt-3 space-y-3">
-                  {items.map((item) => (
-                    <div key={item.id} className="rounded-lg border border-zinc-200 p-3">
-                      <p className="line-clamp-1 text-sm font-semibold text-zinc-900">{item.title}</p>
-                      <p className="mt-1 text-xs text-zinc-600">
-                        {durationText(item.durationValue, item.durationUnit)} | Qty {item.quantity}
-                      </p>
-                      <p className="mt-1 text-xs text-zinc-600">Start: {item.startDate}</p>
-                      <p className="mt-2 text-sm font-bold text-zinc-900">EUR {formatAmount(item.unitPrice * item.quantity)}</p>
-                      <p className="mt-1 text-xs text-zinc-600">
-                        Delivery EUR {formatAmount(Number(item.deliveryFee || 0) * item.quantity)}
-                      </p>
-                    </div>
-                  ))}
+                  {items.map((item) => {
+                    const quoteLine = quoteLineById.get(item.id);
+                    const lineSubtotal = quoteLine?.lineSubtotal ?? item.unitPrice * item.quantity;
+                    const lineDelivery =
+                      quoteLine?.lineDelivery ?? Number(item.deliveryFee || 0) * item.quantity;
+
+                    return (
+                      <div key={item.id} className="rounded-lg border border-zinc-200 p-3">
+                        <p className="line-clamp-1 text-sm font-semibold text-zinc-900">{item.title}</p>
+                        <p className="mt-1 text-xs text-zinc-600">
+                          {durationText(item.durationValue, item.durationUnit)} | Qty {item.quantity}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-600">Start: {item.startDate}</p>
+                        <p className="mt-2 text-sm font-bold text-zinc-900">EUR {formatAmount(lineSubtotal)}</p>
+                        <p className="mt-1 text-xs text-zinc-600">Delivery EUR {formatAmount(lineDelivery)}</p>
+                        {quoteLine?.valid === false ? (
+                          <p className="mt-2 text-xs font-semibold text-rose-600">{quoteLine.issue?.message}</p>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 <div className="mt-4 border-t border-zinc-200 pt-4 text-sm">
