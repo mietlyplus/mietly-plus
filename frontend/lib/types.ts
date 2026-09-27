@@ -262,3 +262,63 @@ export type CartItem = {
   deliveryFee: number;
   addedAt: string;
 };
+
+
+/** AI product-automation draft (product-link workflow). */
+export type ProductDraftImage = {
+  id: string;
+  url: string;
+  origin: "user" | "source" | "ai" | "fixture";
+  role: string;
+  prompt: string;
+  providerId: string;
+  isFixture: boolean;
+  status: "pending" | "ready" | "failed";
+  error: string;
+};
+
+export type ProductDraftWarning = { code: string; field: string; message: string };
+
+export type ProductDraftStep = {
+  status: "pending" | "running" | "done" | "failed" | "skipped";
+  error: string;
+  completedAt: string | null;
+};
+
+export type ProductDraft = {
+  id: string;
+  productId: string | null;
+  sourceUrl: string;
+  weeklyPrice: number;
+  monthlyPrice: number;
+  instruction: string;
+  status: "generating" | "ready" | "failed" | "published" | "discarded";
+  steps: { extraction: ProductDraftStep; text: ProductDraftStep; images: ProductDraftStep };
+  warnings: ProductDraftWarning[];
+  images: ProductDraftImage[];
+  providers: {
+    text: { id: string; model: string; real: boolean };
+    image: { id: string; model: string; real: boolean };
+  };
+  provenance: {
+    retailerPrice: { amount: number; currency: string } | null;
+    extractionConfidence: string;
+    usedStrategies: string[];
+    finalUrl: string;
+    sourceImages: string[];
+    extractedFacts: Record<string, unknown> | null;
+  };
+  product: Product | null;
+  createdAt: string;
+  updatedAt: string;
+  deduplicated?: boolean;
+  recoverable?: boolean;
+  imageError?: string;
+  textError?: string;
+};
+
+export type AiProviderStatus = {
+  text: { id: string; model: string; real: boolean };
+  image: { id: string; model: string; real: boolean };
+  geminiConfigured: boolean;
+};

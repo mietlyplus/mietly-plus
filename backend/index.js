@@ -20,6 +20,7 @@ const Brand = require("./models/Brand");
 const BlogPost = require("./models/BlogPost");
 const SupportRequest = require("./models/SupportRequest");
 const Order = require("./models/Order");
+const ProductDraft = require("./models/ProductDraft");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -2318,6 +2319,620 @@ app.delete("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
 
   await Product.deleteOne({ _id: product._id });
   return res.json({ message: "Product deleted successfully." });
+});
+
+
+// Fetches an image so it can be handed to an image provider as a reference.
+// Source-page images are third-party URLs, so the same SSRF rules apply.
+async function fetchImageAsBase64(url) {
+  const { assertPublicUrl } = require("./lib/source/fetch-source");
+  const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+  try {
+    await assertPublicUrl(url);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    let response;
+    try {
+      response = await fetch(url, { signal: controller.signal, redirect: "follow" });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!response.ok) return null;
+
+    const contentType = String(response.headers.get("content-type") || "");
+    if (!/^image\//i.test(contentType)) return null;
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > MAX_IMAGE_BYTES) return null;
+
+    return { base64: buffer.toString("base64"), mimeType: contentType.split(";")[0] };
+  } catch {
+    return null;
+  }
+}
+
+// Mirrors the draft's image list onto the Product. The first image is the
+// cover; the rest become the gallery, preserving the admin's chosen order.
+async function syncDraftImagesToProduct(draft) {
+  if (!draft.productId) return null;
+  const product = await Product.findById(draft.productId);
+  if (!product) return null;
+
+  const urls = (draft.images || []).map((image) => image.url).filter(Boolean);
+  product.imageUrl = urls[0] || PRODUCT_IMAGE_PLACEHOLDER;
+  product.galleryImages = urls.slice(1);
+  if (product.seo) product.seo.ogImageUrl = urls[0] || "";
+  await product.save();
+
+  return Product.findById(product._id)
+    .populate("categoryId", "name slug")
+    .populate("brandId", "name slug image");
+}
+
+// ===========================================================================
+// Product automation: create a listing from a product link.
+//
+// All three creation paths (manual, CSV/XLSX, product-link + AI) produce the
+// same Product documents. A draft is simply a Product with isActive:false,
+// which every public route already filters out. Publication is a separate,
+// explicitly authorised action enforced here on the server.
+// ===========================================================================
+
+const {
+  assembleDraft,
+  describeProviders,
+  generateOneImage,
+  MAX_IMAGES: MAX_DRAFT_IMAGES,
+  planImages,
+  runExtraction,
+  runTextGeneration,
+} = require("./lib/ai/draft-service");
+
+function mapDraft(draft, product) {
+  return {
+    id: String(draft._id),
+    productId: draft.productId ? String(draft.productId) : null,
+    sourceUrl: draft.sourceUrl,
+    weeklyPrice: draft.weeklyPrice,
+    monthlyPrice: draft.monthlyPrice,
+    instruction: draft.instruction,
+    status: draft.status,
+    steps: draft.steps,
+    warnings: draft.warnings,
+    images: (draft.images || []).map((image) => ({
+      id: String(image._id),
+      url: image.url,
+      origin: image.origin,
+      role: image.role,
+      prompt: image.prompt,
+      providerId: image.providerId,
+      isFixture: image.isFixture,
+      status: image.status,
+      error: image.error,
+    })),
+    providers: draft.providers,
+    provenance: {
+      retailerPrice: draft.provenance?.retailerPrice || null,
+      extractionConfidence: draft.provenance?.extractionConfidence || "",
+      usedStrategies: draft.provenance?.usedStrategies || [],
+      finalUrl: draft.provenance?.finalUrl || "",
+      sourceImages: draft.provenance?.sourceImages || [],
+      extractedFacts: draft.provenance?.extractedFacts || null,
+    },
+    product: product ? mapProduct(product) : null,
+    createdAt: draft.createdAt,
+    updatedAt: draft.updatedAt,
+  };
+}
+
+async function loadCatalogueForMatching() {
+  const [categories, brands] = await Promise.all([
+    Category.find().select("_id name slug").lean(),
+    Brand.find({ isActive: true }).select("_id name slug").lean(),
+  ]);
+
+  return {
+    categories: categories.map((c) => ({
+      id: String(c._id),
+      nameEn: String(c.name?.en || ""),
+      nameDe: String(c.name?.de || ""),
+      slug: String(c.slug || ""),
+    })),
+    brands: brands.map((b) => ({ id: String(b._id), name: String(b.name || ""), slug: String(b.slug || "") })),
+  };
+}
+
+async function uploadGeneratedImage(base64, mimeType) {
+  if (!hasCloudinaryConfig) {
+    throw new Error("Cloudinary is not configured.");
+  }
+  const buffer = Buffer.from(base64, "base64");
+  const result = await new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: "leihfluss/products", resource_type: "image" },
+      (error, uploaded) => (error ? reject(error) : resolve(uploaded))
+    );
+    stream.end(buffer);
+  });
+  return result.secure_url;
+}
+
+async function ensureUniqueSlug(candidate, excludeProductId) {
+  let slug = candidate;
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const query = { slug };
+    if (excludeProductId) query._id = { $ne: excludeProductId };
+    const clash = await Product.findOne(query).select("_id").lean();
+    if (!clash) return slug;
+    slug = `${candidate}-${attempt + 2}`;
+  }
+  return `${candidate}-${Date.now().toString(36)}`;
+}
+
+app.get("/api/admin/product-drafts/providers", requireAdminAuth, (_, res) => {
+  return res.json(describeProviders());
+});
+
+app.get("/api/admin/product-drafts", requireAdminAuth, async (_, res) => {
+  const drafts = await ProductDraft.find({ status: { $ne: "discarded" } })
+    .sort({ createdAt: -1 })
+    .limit(50)
+    .lean();
+  return res.json(drafts.map((draft) => mapDraft(draft, null)));
+});
+
+app.get("/api/admin/product-drafts/:id", requireAdminAuth, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(404).json({ message: "Draft not found." });
+  }
+  const draft = await ProductDraft.findById(req.params.id);
+  if (!draft) return res.status(404).json({ message: "Draft not found." });
+
+  const product = draft.productId
+    ? await Product.findById(draft.productId).populate("categoryId", "name slug").populate("brandId", "name slug image")
+    : null;
+
+  return res.json(mapDraft(draft, product));
+});
+
+// Step 1: extract + generate text + create the private Product.
+app.post("/api/admin/product-drafts", requireAdminAuth, async (req, res) => {
+  const sourceUrl = String(req.body?.sourceUrl || "").trim();
+  const weeklyPrice = Number(req.body?.weeklyPrice);
+  const monthlyPrice = Number(req.body?.monthlyPrice);
+  const instruction = String(req.body?.instruction || "").trim().slice(0, 2000);
+  const userImages = Array.isArray(req.body?.imageUrls)
+    ? req.body.imageUrls.map((url) => String(url || "").trim()).filter(Boolean).slice(0, MAX_DRAFT_IMAGES)
+    : [];
+  const submissionKey = String(req.body?.submissionKey || "").trim().slice(0, 64);
+
+  if (!sourceUrl && userImages.length === 0) {
+    return res.status(400).json({ message: "Provide a product link or at least one photo." });
+  }
+  if (!Number.isFinite(weeklyPrice) || weeklyPrice <= 0) {
+    return res.status(400).json({ message: "Weekly rental price is required." });
+  }
+  if (!Number.isFinite(monthlyPrice) || monthlyPrice <= 0) {
+    return res.status(400).json({ message: "Monthly rental price is required." });
+  }
+
+  // Duplicate-submission guard: a double tap reuses the first draft.
+  if (submissionKey) {
+    const existing = await ProductDraft.findOne({ submissionKey, createdByAdminId: req.admin.sub });
+    if (existing) {
+      const product = existing.productId ? await Product.findById(existing.productId) : null;
+      return res.status(200).json({ ...mapDraft(existing, product), deduplicated: true });
+    }
+  }
+
+  const providers = describeProviders();
+  const draft = await ProductDraft.create({
+    createdByAdminId: req.admin.sub,
+    sourceUrl,
+    weeklyPrice,
+    monthlyPrice,
+    instruction,
+    submissionKey,
+    status: "generating",
+    providers,
+    images: userImages.map((url) => ({ url, origin: "user", role: "user-upload", status: "ready" })),
+  });
+
+  const warnings = [];
+
+  // --- extraction (never fatal) -----------------------------------------
+  draft.steps.extraction.status = "running";
+  const extraction = await runExtraction(sourceUrl);
+  warnings.push(...extraction.warnings);
+  draft.steps.extraction.status = extraction.ok ? "done" : "failed";
+  draft.steps.extraction.error = extraction.error || "";
+  draft.steps.extraction.completedAt = new Date();
+  draft.provenance = {
+    extractedFacts: extraction.result.facts,
+    sourceImages: extraction.result.sourceImages,
+    retailerPrice: extraction.result.retailerPrice || { amount: 0, currency: "" },
+    extractionConfidence: extraction.result.confidence,
+    usedStrategies: extraction.result.usedStrategies,
+    finalUrl: extraction.result.finalUrl || sourceUrl,
+  };
+
+  // --- listing text -------------------------------------------------------
+  const { categories, brands } = await loadCatalogueForMatching();
+  draft.steps.text.status = "running";
+  const text = await runTextGeneration({
+    facts: extraction.result.facts,
+    sourceUrl,
+    instruction,
+    categories,
+    brands,
+    hasUserPhotos: userImages.length > 0,
+  });
+  warnings.push(...text.warnings);
+
+  if (!text.ok) {
+    draft.steps.text.status = "failed";
+    draft.steps.text.error = text.error;
+    draft.status = "failed";
+    draft.warnings = warnings;
+    await draft.save();
+    // The admin's inputs are preserved so nothing has to be re-entered.
+    return res.status(201).json({ ...mapDraft(draft, null), recoverable: true });
+  }
+
+  draft.steps.text.status = "done";
+  draft.steps.text.completedAt = new Date();
+  draft.providers.text = { id: text.providerId, model: text.model, real: text.providerId !== "fixture" };
+
+  const assembled = assembleDraft({
+    listing: text.listing,
+    weeklyPrice,
+    monthlyPrice,
+    categories,
+    brands,
+    images: draft.images.filter((image) => image.url),
+    fallbackSeed: String(draft._id),
+    categoryHint: extraction.result.facts.category,
+  });
+  warnings.push(...assembled.warnings);
+
+  // --- plan images --------------------------------------------------------
+  const imagePlan = planImages({
+    userImages,
+    sourceImages: extraction.result.sourceImages,
+    briefs: text.listing.imageBriefs || [],
+  });
+
+  draft.images = imagePlan.plan.map((entry) => ({
+    url: entry.url || "",
+    origin: entry.origin,
+    role: entry.role,
+    prompt: entry.prompt || "",
+    status: entry.status,
+  }));
+  draft.steps.images.status = imagePlan.generationNeeded ? "pending" : "skipped";
+
+  // A product needs an image; fall back to the first source image if the admin
+  // uploaded none, otherwise the storefront placeholder is used on publish.
+  const readyImages = draft.images.filter((image) => image.url);
+  if (readyImages.length === 0 && extraction.result.sourceImages.length > 0) {
+    draft.images.unshift({
+      url: extraction.result.sourceImages[0],
+      origin: "source",
+      role: "source-reference",
+      status: "ready",
+    });
+  }
+  // The source reference is an extra entry, so re-apply the cap.
+  draft.images = draft.images.slice(0, MAX_DRAFT_IMAGES);
+
+  const slug = await ensureUniqueSlug(assembled.slug);
+  const payload = { ...assembled.payload, slug, imageUrl: draft.images.find((i) => i.url)?.url || "" };
+
+  if (!payload.imageUrl) {
+    warnings.push({ code: "no_image_yet", field: "images", message: "No image yet. Generate or upload one before publishing." });
+    payload.imageUrl = PRODUCT_IMAGE_PLACEHOLDER;
+  }
+  if (!payload.categoryId || !payload.brandId) {
+    // Product requires both; keep the draft alive and let the admin choose.
+    payload.categoryId = payload.categoryId || (categories[0] ? categories[0].id : null);
+    payload.brandId = payload.brandId || (brands[0] ? brands[0].id : null);
+    warnings.push({
+      code: "placeholder_taxonomy",
+      field: "categoryId",
+      message: "Category and/or brand were not confidently matched; a placeholder was used. Fix before publishing.",
+    });
+  }
+
+  if (!payload.categoryId || !payload.brandId) {
+    draft.status = "failed";
+    draft.warnings = [
+      ...warnings,
+      { code: "no_catalogue", field: "categoryId", message: "No categories or brands exist yet. Create one first." },
+    ];
+    await draft.save();
+    return res.status(201).json({ ...mapDraft(draft, null), recoverable: true });
+  }
+
+  const product = await Product.create(payload);
+  draft.productId = product._id;
+  draft.status = "ready";
+  draft.warnings = warnings;
+  await draft.save();
+
+  const populated = await Product.findById(product._id)
+    .populate("categoryId", "name slug")
+    .populate("brandId", "name slug image");
+
+  return res.status(201).json(mapDraft(draft, populated));
+});
+
+// Step 2: generate (or regenerate) exactly one image.
+app.post("/api/admin/product-drafts/:id/images/:imageId/generate", requireAdminAuth, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(404).json({ message: "Draft not found." });
+  }
+  const draft = await ProductDraft.findById(req.params.id);
+  if (!draft) return res.status(404).json({ message: "Draft not found." });
+
+  const image = draft.images.id(req.params.imageId);
+  if (!image) return res.status(404).json({ message: "Image not found." });
+  if (image.origin === "user") {
+    return res.status(400).json({ message: "Your own uploads are never overwritten. Delete it first if you want a generated image." });
+  }
+
+  // References: admin uploads first, then source imagery.
+  const references = [];
+  for (const candidate of draft.images.filter((entry) => entry.origin === "user" && entry.url).slice(0, 3)) {
+    const fetched = await fetchImageAsBase64(candidate.url);
+    if (fetched) references.push(fetched);
+  }
+  if (references.length === 0) {
+    for (const url of (draft.provenance?.sourceImages || []).slice(0, 2)) {
+      const fetched = await fetchImageAsBase64(url);
+      if (fetched) references.push(fetched);
+    }
+  }
+
+  const brief = {
+    role: image.role || "image",
+    prompt: String(req.body?.prompt || image.prompt || "Clean product image on a neutral background"),
+    requiresReference: image.role !== "primary",
+  };
+
+  const generated = await generateOneImage({ brief, references });
+
+  if (!generated.ok) {
+    image.status = "failed";
+    image.error = generated.warning?.message || "Image generation failed.";
+    const already = draft.warnings.some((w) => w.code === generated.warning?.code && w.field === "images");
+    if (generated.warning && !already) draft.warnings.push(generated.warning);
+    await draft.save();
+    // 200: the rest of the draft is intact and the admin can retry just this one.
+    return res.status(200).json({ ...mapDraft(draft, null), imageError: generated.error, retryable: generated.retryable !== false });
+  }
+
+  let url;
+  try {
+    url = await uploadGeneratedImage(generated.image.base64, generated.image.mimeType);
+  } catch (error) {
+    image.status = "failed";
+    image.error = "Generated image could not be stored.";
+    await draft.save();
+    return res.status(200).json({ ...mapDraft(draft, null), imageError: "STORAGE_FAILED", retryable: true });
+  }
+
+  image.url = url;
+  image.status = "ready";
+  image.error = "";
+  image.prompt = brief.prompt;
+  image.providerId = generated.providerId;
+  image.model = generated.model;
+  image.isFixture = Boolean(generated.isFixture);
+  image.origin = generated.isFixture ? "fixture" : "ai";
+
+  draft.steps.images.status = draft.images.some((i) => i.status === "pending") ? "pending" : "done";
+  await draft.save();
+  await syncDraftImagesToProduct(draft);
+
+  return res.json(mapDraft(draft, null));
+});
+
+// Image management: add / delete / reorder / choose primary.
+app.patch("/api/admin/product-drafts/:id/images", requireAdminAuth, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(404).json({ message: "Draft not found." });
+  }
+  const draft = await ProductDraft.findById(req.params.id);
+  if (!draft) return res.status(404).json({ message: "Draft not found." });
+
+  const action = String(req.body?.action || "").trim();
+
+  if (action === "add") {
+    const url = String(req.body?.url || "").trim();
+    if (!url) return res.status(400).json({ message: "Image URL is required." });
+    if (draft.images.length >= MAX_DRAFT_IMAGES) {
+      return res.status(400).json({ message: `A listing holds at most ${MAX_DRAFT_IMAGES} images.` });
+    }
+    draft.images.push({ url, origin: "user", role: "user-upload", status: "ready" });
+  } else if (action === "delete") {
+    const imageId = String(req.body?.imageId || "");
+    const image = draft.images.id(imageId);
+    if (!image) return res.status(404).json({ message: "Image not found." });
+    // Reassigning the array is the removal that reliably persists, matching
+    // how the reorder branch below rewrites the list.
+    draft.images = draft.images.filter((entry) => String(entry._id) !== imageId);
+  } else if (action === "replace") {
+    const image = draft.images.id(String(req.body?.imageId || ""));
+    const url = String(req.body?.url || "").trim();
+    if (!image) return res.status(404).json({ message: "Image not found." });
+    if (!url) return res.status(400).json({ message: "Replacement URL is required." });
+    image.url = url;
+    image.origin = "user";
+    image.role = "user-upload";
+    image.status = "ready";
+    image.error = "";
+    image.isFixture = false;
+  } else if (action === "reorder") {
+    const order = Array.isArray(req.body?.imageIds) ? req.body.imageIds.map(String) : [];
+    const byId = new Map(draft.images.map((image) => [String(image._id), image]));
+    const reordered = order.map((id) => byId.get(id)).filter(Boolean);
+    if (reordered.length !== draft.images.length) {
+      return res.status(400).json({ message: "The new order must list every image exactly once." });
+    }
+    draft.images = reordered;
+  } else if (action === "primary") {
+    const id = String(req.body?.imageId || "");
+    const index = draft.images.findIndex((image) => String(image._id) === id);
+    if (index === -1) return res.status(404).json({ message: "Image not found." });
+    const [picked] = draft.images.splice(index, 1);
+    draft.images.unshift(picked);
+  } else {
+    return res.status(400).json({ message: "Unknown image action." });
+  }
+
+  await draft.save();
+  const product = await syncDraftImagesToProduct(draft);
+  return res.json(mapDraft(draft, product));
+});
+
+// Regenerate the listing text only, keeping images untouched.
+app.post("/api/admin/product-drafts/:id/regenerate-text", requireAdminAuth, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(404).json({ message: "Draft not found." });
+  }
+  const draft = await ProductDraft.findById(req.params.id);
+  if (!draft) return res.status(404).json({ message: "Draft not found." });
+  if (!draft.productId) return res.status(400).json({ message: "This draft has no product yet." });
+
+  if (req.body?.instruction !== undefined) {
+    draft.instruction = String(req.body.instruction || "").trim().slice(0, 2000);
+  }
+
+  const { categories, brands } = await loadCatalogueForMatching();
+  const text = await runTextGeneration({
+    facts: draft.provenance?.extractedFacts || {},
+    sourceUrl: draft.sourceUrl,
+    instruction: draft.instruction,
+    categories,
+    brands,
+    hasUserPhotos: draft.images.some((image) => image.origin === "user"),
+  });
+
+  if (!text.ok) {
+    draft.steps.text.status = "failed";
+    draft.steps.text.error = text.error;
+    await draft.save();
+    return res.status(200).json({ ...mapDraft(draft, null), textError: text.error, retryable: text.retryable });
+  }
+
+  const assembled = assembleDraft({
+    listing: text.listing,
+    weeklyPrice: draft.weeklyPrice,
+    monthlyPrice: draft.monthlyPrice,
+    categories,
+    brands,
+    images: draft.images.filter((image) => image.url),
+    fallbackSeed: String(draft._id),
+    categoryHint: draft.provenance?.extractedFacts?.category,
+  });
+
+  const product = await Product.findById(draft.productId);
+  if (!product) return res.status(404).json({ message: "Draft product not found." });
+
+  // Text fields only: images, pricing and taxonomy the admin already fixed stay.
+  const textFields = [
+    "title", "titleI18n", "description", "descriptionI18n",
+    "shortDescription", "shortDescriptionI18n", "tags", "specifications", "seo", "sku",
+  ];
+  for (const field of textFields) product[field] = assembled.payload[field];
+  await product.save();
+
+  draft.steps.text.status = "done";
+  draft.steps.text.error = "";
+  draft.providers.text = { id: text.providerId, model: text.model, real: text.providerId !== "fixture" };
+  draft.warnings = [...assembled.warnings, ...text.warnings];
+  await draft.save();
+
+  const populated = await Product.findById(product._id)
+    .populate("categoryId", "name slug")
+    .populate("brandId", "name slug image");
+  return res.json(mapDraft(draft, populated));
+});
+
+// Publication. Enforced here, never by hiding a button.
+app.post("/api/admin/product-drafts/:id/publish", requireAdminAuth, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(404).json({ message: "Draft not found." });
+  }
+  const draft = await ProductDraft.findById(req.params.id);
+  if (!draft) return res.status(404).json({ message: "Draft not found." });
+  if (!draft.productId) return res.status(400).json({ message: "This draft has no product to publish." });
+
+  // The admin must restate intent; an AI step can never reach this branch.
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({ message: "Publication requires an explicit confirmation." });
+  }
+
+  const product = await Product.findById(draft.productId);
+  if (!product) return res.status(404).json({ message: "Draft product not found." });
+
+  const blockers = [];
+  if (!product.title?.trim()) blockers.push("A title is required.");
+  if (!product.categoryId) blockers.push("A category is required.");
+  if (!product.brandId) blockers.push("A brand is required.");
+  if (!product.imageUrl || product.imageUrl === PRODUCT_IMAGE_PLACEHOLDER) blockers.push("At least one real image is required.");
+  if (!(product.buyerPrice > 0)) blockers.push("A weekly rental price is required.");
+  if (!(product.monthlyBuyerPrice > 0)) blockers.push("A monthly rental price is required.");
+
+  // Nothing produced by the development fixture providers may reach the live
+  // catalogue -- neither images nor listing text.
+  const fixtureImages = draft.images.filter((image) => image.isFixture && image.url);
+  if (fixtureImages.length > 0) {
+    blockers.push("Development fixture images cannot be published. Replace or regenerate them with a real provider.");
+  }
+  if (draft.providers?.text?.real === false) {
+    blockers.push(
+      "This listing text came from the development fixture provider, not a real AI model. Configure a text provider and regenerate before publishing."
+    );
+  }
+
+  if (blockers.length > 0) {
+    return res.status(400).json({ message: blockers[0], blockers });
+  }
+
+  product.isActive = true;
+  await product.save();
+
+  draft.status = "published";
+  draft.publishedAt = new Date();
+  draft.publishedByAdminId = req.admin.sub;
+  await draft.save();
+
+  const populated = await Product.findById(product._id)
+    .populate("categoryId", "name slug")
+    .populate("brandId", "name slug image");
+  return res.json({ message: "Product published.", draft: mapDraft(draft, populated) });
+});
+
+app.delete("/api/admin/product-drafts/:id", requireAdminAuth, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(404).json({ message: "Draft not found." });
+  }
+  const draft = await ProductDraft.findById(req.params.id);
+  if (!draft) return res.status(404).json({ message: "Draft not found." });
+
+  if (draft.productId) {
+    const product = await Product.findById(draft.productId).select("_id isActive").lean();
+    // Never delete something already live through the draft route.
+    if (product && product.isActive !== true) {
+      await Product.deleteOne({ _id: draft.productId });
+    }
+  }
+
+  draft.status = "discarded";
+  await draft.save();
+  return res.json({ message: "Draft discarded." });
 });
 
 app.post("/api/auth/check-email", async (req, res) => {
