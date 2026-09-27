@@ -1218,6 +1218,20 @@ export async function fetchCheckoutQuote(
   return (await response.json()) as CheckoutQuote;
 }
 
+/** Raised when the server refuses to charge because its authoritative total no
+ *  longer matches the amount the customer approved. Carries the refreshed quote
+ *  so the UI can re-render and ask for a fresh confirmation. */
+export class CheckoutPriceChangedError extends Error {
+  readonly code = "PRICE_CHANGED";
+  readonly quote: CheckoutQuote;
+
+  constructor(message: string, quote: CheckoutQuote) {
+    super(message);
+    this.name = "CheckoutPriceChangedError";
+    this.quote = quote;
+  }
+}
+
 export async function createCheckoutSession(
   token: string,
   payload: {
@@ -1231,6 +1245,10 @@ export async function createCheckoutSession(
       durationUnit: "day" | "week" | "month";
       startDate: string;
     }>;
+    /** The total the customer just approved. A precondition only — the server
+     *  recalculates from the database and refuses on mismatch. It can never set
+     *  or influence the amount charged. */
+    expectedTotal?: number;
     shippingAddress: {
       fullName: string;
       phone: string;
@@ -1254,6 +1272,14 @@ export async function createCheckoutSession(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: "Could not create checkout session." }));
+
+    if (response.status === 409 && error?.code === "PRICE_CHANGED") {
+      throw new CheckoutPriceChangedError(
+        error.message || "Pricing changed. Please confirm the updated total.",
+        error as CheckoutQuote
+      );
+    }
+
     throw new Error(error.message || "Could not create checkout session.");
   }
 

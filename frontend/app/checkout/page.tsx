@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ClientNavbar } from "@/components/client-navbar";
 import { HomeFooter } from "@/components/home-footer";
 import {
+  CheckoutPriceChangedError,
   createCheckoutSession,
   createIdentityVerificationSession,
   fetchCheckoutQuote,
@@ -65,6 +66,9 @@ function CheckoutPageContent() {
   const [quote, setQuote] = useState<CheckoutQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(true);
   const [quoteError, setQuoteError] = useState("");
+  // Set when the server refuses a charge because pricing moved. Forces the
+  // customer to acknowledge the new total before Pay can be pressed again.
+  const [repriceNotice, setRepriceNotice] = useState("");
   const [identityVerified, setIdentityVerified] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
   const [verificationLoading, setVerificationLoading] = useState(false);
@@ -342,8 +346,12 @@ function CheckoutPageContent() {
     setPaying(true);
     setError("");
     setMessage("");
+    setRepriceNotice("");
     try {
       const session = await createCheckoutSession(token, {
+        // Precondition only. The server recalculates from the database and
+        // refuses with 409 if this no longer matches; it never sets the price.
+        expectedTotal: grandTotal,
         // Intent only. Prices, deposits and delivery fees are resolved server-side
         // from the product record, so sending them here would be meaningless.
         items: items.map((item) => ({
@@ -359,6 +367,15 @@ function CheckoutPageContent() {
       if (!session.url) throw new Error("Stripe checkout URL not returned.");
       window.location.href = session.url;
     } catch (err) {
+      if (err instanceof CheckoutPriceChangedError) {
+        // Do not redirect. Show the server's new total and make the customer
+        // confirm it explicitly before another attempt.
+        setQuote(err.quote);
+        setRepriceNotice(err.message);
+        setPaying(false);
+        return;
+      }
+
       setError(err instanceof Error ? err.message : "Could not start checkout.");
       setPaying(false);
     }
@@ -599,6 +616,22 @@ function CheckoutPageContent() {
                     ? "Proceed to secure Stripe payment."
                     : "Verification is not required for selected products. Proceed to secure Stripe payment."}
                 </p>
+                {repriceNotice ? (
+                  <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                    <p className="font-semibold">{repriceNotice}</p>
+                    <p className="mt-1">
+                      Updated total: <span className="font-bold">EUR {formatAmount(grandTotal)}</span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setRepriceNotice("")}
+                      className="mt-2 rounded-md border border-amber-400 bg-white px-3 py-1.5 text-sm font-semibold text-amber-900"
+                    >
+                      Review and continue
+                    </button>
+                  </div>
+                ) : null}
+
                 {quoteIssues.length > 0 ? (
                   <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
                     <p className="font-semibold">Please fix these items in your cart first:</p>
@@ -619,6 +652,7 @@ function CheckoutPageContent() {
                   disabled={
                     paying ||
                     quoteLoading ||
+                    Boolean(repriceNotice) ||
                     !cartIsPayable ||
                     items.length === 0 ||
                     (requiresIdentityVerification && !identityVerified)

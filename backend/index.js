@@ -3137,6 +3137,34 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
     return res.status(400).json({ message: "Order total must be greater than zero." });
   }
 
+  // Precondition, not a price. `expectedTotal` is the figure the customer just
+  // approved; it is only ever compared against the server's own total and can
+  // never raise, lower or otherwise influence what is charged. A mismatch means
+  // the catalogue moved between the quote and this request, so the charge is
+  // refused and a refreshed quote is returned for the customer to re-confirm.
+  const expectedTotalRaw = req.body?.expectedTotal;
+  const hasExpectedTotal =
+    expectedTotalRaw !== undefined && expectedTotalRaw !== null && expectedTotalRaw !== "";
+
+  if (hasExpectedTotal) {
+    const expectedTotal = Number(expectedTotalRaw);
+    const expectedTotalIsUsable = Number.isFinite(expectedTotal) && expectedTotal >= 0;
+
+    if (!expectedTotalIsUsable || Math.abs(expectedTotal - totals.total) >= 0.01) {
+      return res.status(409).json({
+        code: "PRICE_CHANGED",
+        message:
+          "Pricing changed since you reviewed your cart. Please review the updated total and confirm again.",
+        currency: WEBSITE_CURRENCY,
+        lines,
+        issues: [],
+        totals,
+        requiresIdentityVerification: pricedItems.some((item) => item.verificationRequired),
+        valid: true,
+      });
+    }
+  }
+
   const lineItems = pricedItems.map((item) => ({
     quantity: item.quantity,
     price_data: {
@@ -3271,6 +3299,68 @@ function extractCheckoutSessionId(stripeEvent) {
   return String(object.id || "").trim();
 }
 
+// An event whose order cannot be resolved within this window is assumed to be
+// racing order creation, and is left unclaimed so Stripe retries. Past it, the
+// session is treated as genuinely foreign and acknowledged so retries stop.
+const UNRESOLVED_EVENT_GRACE_MS = 15 * 60 * 1000;
+
+/**
+ * Locates the Order a Stripe event belongs to.
+ *
+ * Primary match is the stored checkout session id. That id is persisted just
+ * after the session is created, so a fast webhook can arrive before the write
+ * lands; `metadata.orderId` (set by us when creating the session) closes that
+ * window. Metadata is verified against the order before it is trusted to route
+ * a payment, and a contradiction is reported rather than guessed at.
+ */
+async function resolveOrderForStripeEvent(stripeEvent) {
+  const session = stripeEvent?.data?.object || {};
+  const sessionId = String(session.id || "").trim();
+  const metadata = session.metadata || {};
+  const metadataOrderId = String(metadata.orderId || "").trim();
+  const metadataOrderNumber = String(metadata.orderNumber || "").trim();
+  const metadataUserId = String(metadata.userId || "").trim();
+
+  if (sessionId) {
+    const bySession = await Order.findOne({ stripeCheckoutSessionId: sessionId });
+    if (bySession) return { order: bySession, matchedBy: "sessionId", mismatch: null };
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(metadataOrderId)) {
+    return { order: null, matchedBy: null, mismatch: null };
+  }
+
+  const byMetadata = await Order.findById(metadataOrderId);
+  if (!byMetadata) return { order: null, matchedBy: null, mismatch: null };
+
+  if (metadataOrderNumber && byMetadata.orderNumber !== metadataOrderNumber) {
+    return { order: null, matchedBy: null, mismatch: "orderNumber" };
+  }
+
+  if (metadataUserId && String(byMetadata.userId) !== metadataUserId) {
+    return { order: null, matchedBy: null, mismatch: "userId" };
+  }
+
+  const storedSessionId = String(byMetadata.stripeCheckoutSessionId || "").trim();
+  if (storedSessionId && sessionId && storedSessionId !== sessionId) {
+    // The order already belongs to a different checkout session; never move it.
+    return { order: null, matchedBy: null, mismatch: "sessionId" };
+  }
+
+  if (!storedSessionId && sessionId) {
+    byMetadata.stripeCheckoutSessionId = sessionId;
+    await byMetadata.save();
+  }
+
+  return { order: byMetadata, matchedBy: "metadata", mismatch: null };
+}
+
+function isStripeEventWithinGrace(stripeEvent) {
+  const createdSeconds = Number(stripeEvent?.created);
+  if (!Number.isFinite(createdSeconds) || createdSeconds <= 0) return true;
+  return Date.now() - createdSeconds * 1000 < UNRESOLVED_EVENT_GRACE_MS;
+}
+
 // Stripe needs the exact signed bytes. Express gives us a Buffer via
 // express.raw; some serverless runtimes parse the body first, so fall back to
 // whatever raw representation is available and fail closed if there is none.
@@ -3318,13 +3408,66 @@ app.post(STRIPE_WEBHOOK_PATH, async (req, res) => {
     return res.json({ received: true, ignored: true });
   }
 
-  // Claim the event id before doing any work. The unique index means a
+  const sessionId = extractCheckoutSessionId(stripeEvent);
+  if (!sessionId) {
+    return res.json({ received: true, ignored: true });
+  }
+
+  // Resolve the order BEFORE claiming the event. Claiming first would burn the
+  // idempotency key on a delivery that raced order creation, and the 200 would
+  // stop Stripe retrying a payment we never recorded.
+  let resolution;
+  try {
+    resolution = await resolveOrderForStripeEvent(stripeEvent);
+  } catch (error) {
+    console.error("Stripe webhook order lookup failed:", error.message);
+    return res.status(500).json({ message: "Could not resolve order for Stripe event." });
+  }
+
+  const { order, mismatch } = resolution;
+
+  if (!order) {
+    if (!mismatch && isStripeEventWithinGrace(stripeEvent)) {
+      // Leave the event unclaimed so Stripe retries once the order write lands.
+      console.warn(
+        `Stripe webhook ${stripeEvent.type} could not resolve an order for session ${sessionId} yet; asking Stripe to retry.`
+      );
+      return res.status(409).json({
+        received: false,
+        matched: false,
+        message: "Order is not resolvable yet. Please retry.",
+      });
+    }
+
+    if (mismatch) {
+      console.error(
+        `Stripe webhook ${stripeEvent.type} metadata contradicts the referenced order (${mismatch}) for session ${sessionId}.`
+      );
+    } else {
+      console.error(
+        `Stripe webhook ${stripeEvent.type} had no matching order for session ${sessionId} after the grace window.`
+      );
+    }
+
+    // Acknowledge so Stripe stops retrying an event we can never match.
+    await StripeWebhookEvent.create({
+      eventId: stripeEvent.id,
+      type: stripeEvent.type,
+    }).catch((error) => {
+      if (!error || error.code !== 11000) throw error;
+    });
+
+    return res.json({ received: true, matched: false });
+  }
+
+  // Claim the event id now that the order is known. The unique index means a
   // concurrent or replayed delivery loses the race and exits without
   // reprocessing, which keeps the handler idempotent.
   try {
     await StripeWebhookEvent.create({
       eventId: stripeEvent.id,
       type: stripeEvent.type,
+      orderId: order._id,
     });
   } catch (error) {
     if (error && error.code === 11000) {
@@ -3335,19 +3478,6 @@ app.post(STRIPE_WEBHOOK_PATH, async (req, res) => {
   }
 
   try {
-    const sessionId = extractCheckoutSessionId(stripeEvent);
-    if (!sessionId) {
-      return res.json({ received: true, ignored: true });
-    }
-
-    const order = await Order.findOne({ stripeCheckoutSessionId: sessionId });
-    if (!order) {
-      console.warn(`Stripe webhook ${stripeEvent.type} had no matching order for session ${sessionId}.`);
-      return res.json({ received: true, matched: false });
-    }
-
-    await StripeWebhookEvent.updateOne({ eventId: stripeEvent.id }, { $set: { orderId: order._id } });
-
     const sessionObject = stripeEvent.data.object || {};
 
     if (
@@ -3563,3 +3693,4 @@ module.exports.initializeApp = initializeApp;
 module.exports.runRentalEndingReminderSweep = runRentalEndingReminderSweep;
 module.exports.applyPaidCheckoutSession = applyPaidCheckoutSession;
 module.exports.markCheckoutSessionUnpaid = markCheckoutSessionUnpaid;
+module.exports.resolveOrderForStripeEvent = resolveOrderForStripeEvent;
