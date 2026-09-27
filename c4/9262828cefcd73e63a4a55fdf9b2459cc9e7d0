@@ -1,0 +1,19 @@
+backend/index.js
+  s_755b8269fb6f42::t_e7fb9cffb8e16e 3424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "c49262828cefcd73e63a4a55fdf9b2459cc9e7d0",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-opus-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
