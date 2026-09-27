@@ -45,16 +45,32 @@ const CAMERA = {
   brandId: null,
 };
 
+// buyerPrice 10/week, no delivery, no deposit -> 1 week x1 = exactly 10.00.
+const TENNER_ID = "eeeeeeeeeeeeeeeeeeeeeeee";
+const TENNER = {
+  ...CAMERA,
+  _id: TENNER_ID,
+  title: "Tenner",
+  slug: "tenner",
+  buyerPrice: 10,
+  deliveryFee: 0,
+};
+
+const CATALOGUE = { [CAMERA_ID]: CAMERA, [TENNER_ID]: TENNER };
+
 const AUTHORITATIVE_TOTAL = 65;
+const TENNER_TOTAL = 10;
 
 let orderCreateCalls = 0;
 
 test.before(() => {
-  Product.find = () => {
+  Product.find = (filter) => {
+    const ids = filter?._id?.$in || [];
+    const docs = ids.map((id) => CATALOGUE[String(id)]).filter(Boolean);
     const query = {
       select: () => query,
       populate: () => query,
-      lean: async () => [CAMERA],
+      lean: async () => docs,
     };
     return query;
   };
@@ -126,6 +142,15 @@ const cartLine = {
   productId: CAMERA_ID,
   quantity: 1,
   durationValue: 3,
+  durationUnit: "week",
+  startDate: "2026-10-01",
+};
+
+const tennerLine = {
+  id: "line-t",
+  productId: TENNER_ID,
+  quantity: 1,
+  durationValue: 1,
   durationUnit: "week",
   startDate: "2026-10-01",
 };
@@ -238,12 +263,73 @@ test("null means no precondition, which is safe because the server still prices"
   assert.notEqual(body.code, "PRICE_CHANGED");
 });
 
-test("a rounding-level difference is tolerated", async () => {
+test("a value that rounds to the same cent is accepted", async () => {
+  // Float noise below half a cent still denotes the same chargeable amount.
   const { status } = await postCheckoutSession({
     items: [cartLine],
     shippingAddress: SHIPPING,
-    expectedTotal: AUTHORITATIVE_TOTAL + 0.009,
+    expectedTotal: AUTHORITATIVE_TOTAL + 0.004,
   });
 
-  assert.notEqual(status, 409, "sub-cent drift must not block a legitimate checkout");
+  assert.notEqual(status, 409, "sub-cent noise must not block a legitimate checkout");
+});
+
+test("exactly one cent more is refused (EUR 10.00 -> 10.01)", async () => {
+  const { status, body } = await postCheckoutSession({
+    items: [tennerLine],
+    shippingAddress: SHIPPING,
+    expectedTotal: 10.01,
+  });
+
+  assert.equal(status, 409, "a one-cent increase must be caught");
+  assert.equal(body.code, "PRICE_CHANGED");
+  assert.equal(body.totals.total, TENNER_TOTAL);
+});
+
+test("exactly one cent less is refused (EUR 10.00 -> 9.99)", async () => {
+  const { status, body } = await postCheckoutSession({
+    items: [tennerLine],
+    shippingAddress: SHIPPING,
+    expectedTotal: 9.99,
+  });
+
+  assert.equal(status, 409, "a one-cent decrease must be caught");
+  assert.equal(body.code, "PRICE_CHANGED");
+  assert.equal(body.totals.total, TENNER_TOTAL);
+});
+
+test("the exact cent total is accepted", async () => {
+  const { status, body } = await postCheckoutSession({
+    items: [tennerLine],
+    shippingAddress: SHIPPING,
+    expectedTotal: TENNER_TOTAL,
+  });
+
+  assert.notEqual(status, 409);
+  assert.notEqual(body.code, "PRICE_CHANGED");
+});
+
+test("one cent is caught in both directions on a non-round total", async () => {
+  // 65.00 is a round figure; verify the boundary on the other fixture too.
+  for (const expectedTotal of [AUTHORITATIVE_TOTAL + 0.01, AUTHORITATIVE_TOTAL - 0.01]) {
+    const { status, body } = await postCheckoutSession({
+      items: [cartLine],
+      shippingAddress: SHIPPING,
+      expectedTotal,
+    });
+
+    assert.equal(status, 409, `expected refusal for ${expectedTotal}`);
+    assert.equal(body.totals.total, AUTHORITATIVE_TOTAL);
+  }
+});
+
+test("comparison is exact in cents, not a float epsilon", async () => {
+  // 0.1 + 0.2 style drift must neither mask nor invent a difference.
+  const { status } = await postCheckoutSession({
+    items: [tennerLine],
+    shippingAddress: SHIPPING,
+    expectedTotal: 9.999999999999998,
+  });
+
+  assert.notEqual(status, 409, "10.000000 within float noise is the same cent");
 });

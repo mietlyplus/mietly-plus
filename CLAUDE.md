@@ -124,6 +124,46 @@ the exact signed bytes.
 auth routes return 500 rather than signing with a known value. Never reintroduce
 a default secret.
 
+**Webhook claims are recoverable.** `StripeWebhookEvent` records a lifecycle,
+not just existence. A claim is `processing` until the work is done and only then
+`completed`. A worker that dies mid-flight leaves a stale `processing` claim
+that a later retry takes over once the lease (`STRIPE_EVENT_LEASE_MS`, 2
+minutes — longer than the 60s function limit) expires. Never treat the mere
+presence of a `StripeWebhookEvent` row as proof the event was handled.
+
+**Money is compared in integer cents.** `expectedTotal` is checked against the
+server total as `Math.round(value * 100)` on both sides. Never compare currency
+with a float epsilon; a one-cent change must always be detected.
+
+### Removing the `expectedTotal` compatibility path
+
+`/api/payments/checkout-session` currently accepts a request with `expectedTotal`
+omitted or `null`, and proceeds without the price-confirmation check. This is a
+**temporary** allowance for the deploy window, when a browser may still be
+running a cached bundle that predates the field.
+
+It is safe but not desirable: the server always prices authoritatively, so a
+missing precondition cannot change the amount charged — it only skips the step
+that makes the customer re-confirm a total that moved.
+
+**Target removal: 2026-11-30** (`TODO(2026-11-30)` in `backend/index.js`). After
+that date, a request without `expectedTotal` should be rejected with `400`.
+
+Remove it only once **all** of these hold:
+
+1. This work is merged and deployed to production.
+2. The Stripe webhook is registered and confirmed working in production.
+3. At least 30 days have passed since that deploy, so cached bundles have aged
+   out.
+4. The backend log line `checkout-session called without expectedTotal` has
+   stopped appearing. This is the actual signal — **if it is still occurring,
+   extend the date rather than breaking those clients.**
+
+When removing it, delete the `hasExpectedTotal` branch, make the field required
+in `frontend/lib/api.ts`, and update `backend/checkout-precondition.test.js`,
+where two tests (`omitting the expected total…`, `null means no precondition…`)
+assert the current permissive behaviour and must be inverted.
+
 ---
 
 ## 4. Commands

@@ -3142,15 +3142,33 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
   // never raise, lower or otherwise influence what is charged. A mismatch means
   // the catalogue moved between the quote and this request, so the charge is
   // refused and a refreshed quote is returned for the customer to re-confirm.
+  //
+  // TODO(2026-11-30): make `expectedTotal` mandatory and reject a request
+  // without it. See "Removing the expectedTotal compatibility path" in
+  // CLAUDE.md for the conditions that must hold first.
   const expectedTotalRaw = req.body?.expectedTotal;
   const hasExpectedTotal =
     expectedTotalRaw !== undefined && expectedTotalRaw !== null && expectedTotalRaw !== "";
+
+  if (!hasExpectedTotal) {
+    // Surfaced so the removal decision below can be made on evidence: once this
+    // stops appearing, no client is relying on the compatibility path.
+    console.warn(
+      "checkout-session called without expectedTotal (legacy client). See TODO(2026-11-30)."
+    );
+  }
 
   if (hasExpectedTotal) {
     const expectedTotal = Number(expectedTotalRaw);
     const expectedTotalIsUsable = Number.isFinite(expectedTotal) && expectedTotal >= 0;
 
-    if (!expectedTotalIsUsable || Math.abs(expectedTotal - totals.total) >= 0.01) {
+    // Compared in integer cents. Both sides are the currency's smallest unit,
+    // which is also what Stripe is charged, so a one-cent move is caught
+    // exactly and no float epsilon can mask or invent a difference.
+    const expectedCents = expectedTotalIsUsable ? Math.round(expectedTotal * 100) : null;
+    const authoritativeCents = Math.round(totals.total * 100);
+
+    if (expectedCents === null || expectedCents !== authoritativeCents) {
       return res.status(409).json({
         code: "PRICE_CHANGED",
         message:
@@ -3355,6 +3373,74 @@ async function resolveOrderForStripeEvent(stripeEvent) {
   return { order: byMetadata, matchedBy: "metadata", mismatch: null };
 }
 
+// A handler cannot outlive the 60s function limit, so a claim older than this
+// belongs to a worker that died. Taking it over is safe because every state
+// change the handler performs is idempotent.
+const STRIPE_EVENT_LEASE_MS = 2 * 60 * 1000;
+
+/**
+ * Takes the processing lease for an event.
+ *
+ * Returns `claimed` when this worker should process it, `duplicate` when it has
+ * already completed, and `in_progress` when another worker holds a live lease
+ * (answered with a retry so the two never process concurrently).
+ *
+ * A claim left behind by a crashed worker is taken over once its lease expires,
+ * so an interrupted event is finished by a retry instead of being permanently
+ * skipped.
+ */
+async function claimStripeEvent(stripeEvent, orderId) {
+  try {
+    await StripeWebhookEvent.create({
+      eventId: stripeEvent.id,
+      type: stripeEvent.type,
+      orderId: orderId || null,
+      status: "processing",
+      claimedAt: new Date(),
+    });
+    return { outcome: "claimed" };
+  } catch (error) {
+    if (!error || error.code !== 11000) throw error;
+  }
+
+  const existing = await StripeWebhookEvent.findOne({ eventId: stripeEvent.id });
+  if (!existing) {
+    // Deleted between the failed insert and this read; let Stripe retry.
+    return { outcome: "in_progress" };
+  }
+
+  if (existing.status === "completed") {
+    return { outcome: "duplicate" };
+  }
+
+  const staleBefore = new Date(Date.now() - STRIPE_EVENT_LEASE_MS);
+  const takenOver = await StripeWebhookEvent.findOneAndUpdate(
+    {
+      eventId: stripeEvent.id,
+      status: "processing",
+      claimedAt: { $lte: staleBefore },
+    },
+    { $set: { claimedAt: new Date(), orderId: orderId || existing.orderId || null } },
+    { new: true }
+  );
+
+  if (takenOver) {
+    console.warn(
+      `Stripe webhook ${stripeEvent.id} had an abandoned claim; taking it over and reprocessing.`
+    );
+    return { outcome: "claimed", recovered: true };
+  }
+
+  return { outcome: "in_progress" };
+}
+
+async function completeStripeEvent(stripeEvent, orderId) {
+  await StripeWebhookEvent.updateOne(
+    { eventId: stripeEvent.id },
+    { $set: { status: "completed", processedAt: new Date(), orderId: orderId || null } }
+  );
+}
+
 function isStripeEventWithinGrace(stripeEvent) {
   const createdSeconds = Number(stripeEvent?.created);
   if (!Number.isFinite(createdSeconds) || createdSeconds <= 0) return true;
@@ -3449,10 +3535,13 @@ app.post(STRIPE_WEBHOOK_PATH, async (req, res) => {
       );
     }
 
-    // Acknowledge so Stripe stops retrying an event we can never match.
+    // Acknowledge so Stripe stops retrying an event we can never match. Record
+    // it as completed: there is no work left to recover.
     await StripeWebhookEvent.create({
       eventId: stripeEvent.id,
       type: stripeEvent.type,
+      status: "completed",
+      processedAt: new Date(),
     }).catch((error) => {
       if (!error || error.code !== 11000) throw error;
     });
@@ -3460,21 +3549,28 @@ app.post(STRIPE_WEBHOOK_PATH, async (req, res) => {
     return res.json({ received: true, matched: false });
   }
 
-  // Claim the event id now that the order is known. The unique index means a
-  // concurrent or replayed delivery loses the race and exits without
-  // reprocessing, which keeps the handler idempotent.
+  // Claim the processing lease now that the order is known. A completed claim
+  // is a true duplicate; a live one belongs to another worker; a stale one was
+  // abandoned by a crashed worker and is taken over.
+  let claim;
   try {
-    await StripeWebhookEvent.create({
-      eventId: stripeEvent.id,
-      type: stripeEvent.type,
-      orderId: order._id,
-    });
+    claim = await claimStripeEvent(stripeEvent, order._id);
   } catch (error) {
-    if (error && error.code === 11000) {
-      return res.json({ received: true, duplicate: true });
-    }
     console.error("Stripe webhook bookkeeping failed:", error.message);
     return res.status(500).json({ message: "Could not record Stripe webhook event." });
+  }
+
+  if (claim.outcome === "duplicate") {
+    return res.json({ received: true, duplicate: true });
+  }
+
+  if (claim.outcome === "in_progress") {
+    // Another worker holds a live lease. Ask Stripe to retry rather than
+    // processing the same event twice in parallel.
+    return res.status(409).json({
+      received: false,
+      message: "Event is already being processed. Please retry.",
+    });
   }
 
   try {
@@ -3487,25 +3583,23 @@ app.post(STRIPE_WEBHOOK_PATH, async (req, res) => {
       if (sessionObject.payment_status === "paid") {
         await applyPaidCheckoutSession(order, sessionObject);
       }
-      return res.json({ received: true });
-    }
-
-    if (stripeEvent.type === "checkout.session.async_payment_failed") {
+    } else if (stripeEvent.type === "checkout.session.async_payment_failed") {
       await markCheckoutSessionUnpaid(order);
-      return res.json({ received: true });
-    }
-
-    if (stripeEvent.type === "checkout.session.expired" && order.paymentStatus !== "paid") {
+    } else if (stripeEvent.type === "checkout.session.expired" && order.paymentStatus !== "paid") {
       order.status = "cancelled";
       order.fulfillmentStatus = "cancelled";
       await order.save();
-      return res.json({ received: true });
     }
 
-    return res.json({ received: true });
+    // Only now is the claim terminal. A crash before this point leaves the
+    // lease to expire so a retry can finish the work.
+    await completeStripeEvent(stripeEvent, order._id);
+
+    return res.json({ received: true, recovered: Boolean(claim.recovered) });
   } catch (error) {
-    // Release the idempotency claim so Stripe's retry can reprocess the event.
-    await StripeWebhookEvent.deleteOne({ eventId: stripeEvent.id }).catch(() => {});
+    // Release the claim so Stripe's retry can reprocess immediately rather than
+    // waiting out the lease.
+    await StripeWebhookEvent.deleteOne({ eventId: stripeEvent.id, status: "processing" }).catch(() => {});
     console.error("Stripe webhook processing failed:", error.message);
     return res.status(500).json({ message: "Stripe webhook processing failed." });
   }
@@ -3694,3 +3788,6 @@ module.exports.runRentalEndingReminderSweep = runRentalEndingReminderSweep;
 module.exports.applyPaidCheckoutSession = applyPaidCheckoutSession;
 module.exports.markCheckoutSessionUnpaid = markCheckoutSessionUnpaid;
 module.exports.resolveOrderForStripeEvent = resolveOrderForStripeEvent;
+module.exports.claimStripeEvent = claimStripeEvent;
+module.exports.completeStripeEvent = completeStripeEvent;
+module.exports.STRIPE_EVENT_LEASE_MS = STRIPE_EVENT_LEASE_MS;
