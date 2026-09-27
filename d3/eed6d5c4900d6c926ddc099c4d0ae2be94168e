@@ -1,0 +1,32 @@
+backend/models/StripeWebhookEvent.js
+  s_755b8269fb6f42::t_c9bbef7b6a7324 3-7,26-34,38-41
+backend/checkout-precondition.test.js
+  s_755b8269fb6f42::t_eef183dff502d0 48-60,62,67-69,73,149-157,266-267,271-331,334
+backend/index.js
+  s_755b8269fb6f42::t_c9cd95866b3ab3 3145-3148,3165-3171
+  s_755b8269fb6f42::t_9e2a06e74d44a6 3153-3160
+  s_755b8269fb6f42::t_eb31dd7996b57d 3376-3443
+  s_755b8269fb6f42::t_1ac16a166ce9b8 3538-3539,3543-3544,3552-3555,3557,3563-3574
+  s_755b8269fb6f42::t_844d02162c5afb 3586,3588,3594-3598,3600-3602,3791-3793
+  s_755b8269fb6f42::t_bb47df9565cdf7 3575
+backend/webhook-claim-recovery.test.js
+  s_755b8269fb6f42::t_cff09b46316fc6 1-152
+CLAUDE.md
+  s_755b8269fb6f42::t_9e2a06e74d44a6 127-166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "d3eed6d5c4900d6c926ddc099c4d0ae2be94168e",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-opus-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
