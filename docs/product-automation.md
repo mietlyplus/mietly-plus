@@ -113,3 +113,10 @@ Mocked runs are not sufficient evidence. Before asking for production approval,
 verify with real credentials in an isolated environment: extraction from a
 reachable product page, real AI text, five real generated images, media storage,
 and the approval/revision behaviour.
+
+## Follow-up scope (not part of this release)
+
+- Create a draft from an idea or photos with no product URL.
+- Automatic alternative-source lookup when a retailer blocks access.
+- Further mobile simplification of the create flow.
+- Separate day-based occasion pricing. Existing weekly and monthly pricing keeps its current meaning.
