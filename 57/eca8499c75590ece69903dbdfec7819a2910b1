@@ -1,0 +1,32 @@
+backend/lib/source/extract-product.js
+  s_755b8269fb6f42::t_ac562add6bc5d1 185-214
+  s_755b8269fb6f42::t_cffac3d5a15801 179-184,215-221,258,318-330
+backend/integration/product-automation.test.js
+  s_755b8269fb6f42::t_4092875722909c 803-823
+backend/lib/ai/draft-recovery.test.js
+  s_755b8269fb6f42::t_4092875722909c 83-104
+backend/lib/source/extract-product.test.js
+  s_755b8269fb6f42::t_4092875722909c 140-194
+frontend/app/admin/products/draft/[id]/page.tsx
+  s_755b8269fb6f42::t_4092875722909c 146-150
+backend/lib/ai/draft-service.js
+  s_755b8269fb6f42::t_7e45e42f796322 125-135
+backend/lib/ai/prompts.js
+  s_755b8269fb6f42::t_f3e42b91bb339c 47-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "57eca8499c75590ece69903dbdfec7819a2910b1",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
