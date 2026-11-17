@@ -49,9 +49,10 @@ export default function CreateFromLinkPage() {
       (sourceUrl.trim().length > 0 || photos.length > 0) &&
       Number.isFinite(weekly) && weekly > 0 &&
       Number.isFinite(monthly) && monthly > 0 &&
-      !submitting && !uploading
+      !submitting && !uploading &&
+      providers?.environment?.databaseIsolated !== false
     );
-  }, [sourceUrl, weeklyPrice, monthlyPrice, photos.length, submitting, uploading]);
+  }, [sourceUrl, weeklyPrice, monthlyPrice, photos.length, submitting, uploading, providers]);
 
   const onPhotosSelected = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -110,6 +111,25 @@ export default function CreateFromLinkPage() {
           Paste a product link, set your rental prices, and review the draft before anything goes live.
         </p>
       </header>
+
+      {providers?.environment?.preview ? (
+        providers.environment.databaseIsolated ? (
+          <div className="mb-4 rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+            <p className="font-semibold">Preview environment — test data</p>
+            <p className="mt-1">
+              Drafts go to a separate test database ({providers.environment.databaseName}) and photos to{" "}
+              {providers.environment.uploadFolder}. Nothing here touches the live shop.
+            </p>
+          </div>
+        ) : (
+          <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+            <p className="font-semibold">Draft creation is disabled on this preview</p>
+            <p className="mt-1">
+              It is not connected to its own test database, so creating a draft would write to the live database.
+            </p>
+          </div>
+        )
+      ) : null}
 
       {providers && !providers.image.real ? (
         <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">

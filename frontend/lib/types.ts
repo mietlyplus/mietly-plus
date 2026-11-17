@@ -342,4 +342,11 @@ export type AiProviderStatus = {
   text: { id: string; model: string; real: boolean };
   image: { id: string; model: string; real: boolean };
   geminiConfigured: boolean;
+  environment?: {
+    deployment: string;
+    preview: boolean;
+    databaseIsolated: boolean;
+    databaseName: string;
+    uploadFolder: string;
+  };
 };

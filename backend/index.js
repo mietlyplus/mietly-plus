@@ -10,6 +10,7 @@ const mongoose = require("mongoose");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 const { connectDatabase } = require("./db");
+const { getDatabaseIsolation, isPreviewDeployment, productUploadFolder } = require("./lib/runtime-env");
 const User = require("./models/User");
 const SignupOtp = require("./models/SignupOtp");
 const Admin = require("./models/Admin");
@@ -1455,7 +1456,7 @@ app.post("/api/uploads/product-image", requireAdminAuth, upload.single("image"),
     const uploadResult = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         {
-          folder: "leihfluss/products",
+          folder: productUploadFolder(),
           resource_type: "image",
         },
         (error, result) => {
@@ -2490,7 +2491,7 @@ async function uploadGeneratedImage(base64, mimeType) {
   const buffer = Buffer.from(base64, "base64");
   const result = await new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder: "leihfluss/products", resource_type: "image" },
+      { folder: productUploadFolder(), resource_type: "image" },
       (error, uploaded) => (error ? reject(error) : resolve(uploaded))
     );
     stream.end(buffer);
@@ -2656,8 +2657,39 @@ async function completeDraftGeneration(draft) {
   return mapDraft(draft, populated);
 }
 
+// Draft creation writes products, drafts and media. A preview deployment that
+// has not been given its own database would write them into the shared
+// production database, so every mutating draft route is refused there.
+function blockDraftWritesOnSharedPreviewDatabase(req, res, next) {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+
+  const isolation = getDatabaseIsolation();
+  if (isolation.isolated) return next();
+
+  console.error(`Draft write blocked: ${isolation.reason}`);
+  return res.status(503).json({
+    code: "PREVIEW_DATABASE_NOT_ISOLATED",
+    message:
+      "Draft creation is disabled on this preview because it is not connected to its own test database. " +
+      "Nothing was written.",
+  });
+}
+
+app.use("/api/admin/product-drafts", blockDraftWritesOnSharedPreviewDatabase);
+
 app.get("/api/admin/product-drafts/providers", requireAdminAuth, (_, res) => {
-  return res.json(describeProviders());
+  const isolation = getDatabaseIsolation();
+  return res.json({
+    ...describeProviders(),
+    environment: {
+      deployment: process.env.VERCEL_ENV || "local",
+      preview: isPreviewDeployment(),
+      databaseIsolated: isolation.isolated,
+      // Only a preview's database name is shown; production's is not exposed.
+      databaseName: isolation.preview ? isolation.dbName : "",
+      uploadFolder: productUploadFolder(),
+    },
+  });
 });
 
 app.get("/api/admin/product-drafts", requireAdminAuth, async (_, res) => {
