@@ -67,45 +67,50 @@ export default function ProductDraftReviewPage() {
     load(token);
   }, [token, draftId, load]);
 
-  // "Create Draft" should leave a finished draft, not empty slots. Generate each
-  // pending image in turn -- one request per image so each stays inside the
-  // serverless limit.
-  //
-  // Spend is bounded by construction: only images still "pending" are touched,
-  // each image id is attempted at most once per page session, there is no
-  // automatic retry, and the pass stops at the first failure. A failed image
-  // stays visible with its own Regenerate button, so a retry is always deliberate.
-  useEffect(() => {
-    if (!token || !draft || autoRunInFlightRef.current) return;
-    if (draft.status !== "ready") return;
-
-    const pending = draft.images.filter(
-      (image) => image.status === "pending" && image.origin !== "user" && !attemptedImageIdsRef.current.has(image.id)
-    );
-    if (pending.length === 0) return;
-
-    autoRunInFlightRef.current = true;
-
-    (async () => {
+  // Generates the given pending images in turn -- one request per image so each
+  // stays inside the serverless limit. Spend is bounded by construction: each image
+  // id is attempted at most once per page session, there is no automatic retry, and
+  // the pass stops at the first failure. A failed image stays visible with its own
+  // Regenerate button, so a retry is always deliberate.
+  const generatePending = useCallback(
+    async (pending: ProductDraft["images"]) => {
+      if (autoRunInFlightRef.current) return;
+      autoRunInFlightRef.current = true;
       let done = 0;
-      for (const image of pending) {
-        attemptedImageIdsRef.current.add(image.id);
-        setAutoProgress(`Generating image ${done + 1} of ${pending.length}…`);
-        try {
-          const next = await generateDraftImage(token, draftId, image.id);
-          setDraft(next);
-          const result = next.images.find((entry) => entry.id === image.id);
-          if (!result || result.status !== "ready") break;
-          done += 1;
-        } catch (err) {
-          setError(err instanceof Error ? err.message : "Image generation stopped.");
-          break;
+      try {
+        for (const image of pending) {
+          attemptedImageIdsRef.current.add(image.id);
+          setAutoProgress(`Generating image ${done + 1} of ${pending.length}…`);
+          try {
+            const next = await generateDraftImage(token, draftId, image.id);
+            setDraft(next);
+            const result = next.images.find((entry) => entry.id === image.id);
+            if (!result || result.status !== "ready") break;
+            done += 1;
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Image generation stopped.");
+            break;
+          }
         }
+      } finally {
+        setAutoProgress("");
+        autoRunInFlightRef.current = false;
       }
-      setAutoProgress("");
-      autoRunInFlightRef.current = false;
-    })();
-  }, [token, draft, draftId]);
+    },
+    [token, draftId]
+  );
+
+  const pendingImages = (draft?.images || []).filter(
+    (image) => image.status === "pending" && image.origin !== "user" && !attemptedImageIdsRef.current.has(image.id)
+  );
+
+  // A normal draft should arrive finished, so its pending images start on their own.
+  // A PUBLISHED listing never spends on its own: its missing views are created only
+  // when the owner presses the button below.
+  useEffect(() => {
+    if (!token || !draft || draft.status !== "ready" || pendingImages.length === 0) return;
+    void generatePending(pendingImages);
+  }, [token, draft, pendingImages, generatePending]);
 
   const run = async (label: string, action: () => Promise<ProductDraft | void>) => {
     setBusy(label);
@@ -319,6 +324,17 @@ export default function ProductDraftReviewPage() {
             </div>
             <div><dt className="text-zinc-500">Tags</dt><dd>{draft.pendingRevision.proposed.tags.join(", ") || "—"}</dd></div>
           </dl>
+        </div>
+      ) : null}
+
+      {draft.status === "published" && pendingImages.length > 0 ? (
+        <div className="rounded-xl border border-sky-300 bg-sky-50 p-4 text-sm text-sky-900">
+          <p className="font-semibold">{pendingImages.length} missing image(s) can now be created from your photo</p>
+          <p className="mt-1">Each costs a few cents. They are added to the unapproved changes; the live listing is unchanged until you apply them.</p>
+          <button type="button" disabled={Boolean(busy) || Boolean(autoProgress)} onClick={() => void generatePending(pendingImages)}
+            className="mt-2 rounded-lg bg-[rgb(73,153,173)] px-4 py-2 font-bold text-white disabled:opacity-50">
+            Create {pendingImages.length} missing image(s)
+          </button>
         </div>
       ) : null}
 

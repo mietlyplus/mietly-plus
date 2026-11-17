@@ -867,3 +867,42 @@ test("a failed re-read never replaces source data that already worked", async ()
 
   assert.equal(result.body.provenance.extractedFacts.name, before, "good source data is kept");
 });
+
+test("adding the owner's photo to a published listing plans the missing views as a pending revision, free of charge", async () => {
+  const draft = await createDraft();
+  await makePublishable(draft.id);
+  const published = await asAdmin(`/api/admin/product-drafts/${draft.id}/publish`, { method: "POST", body: JSON.stringify({ confirm: true }) });
+  const slug = published.body.draft.product.slug;
+  const liveBefore = await call(`/api/products/${slug}`);
+
+  const record = await ProductDraft.findById(draft.id);
+  record.imageBriefs = [{ role: "hero", prompt: "front", requiresReference: false }];
+  record.images = [{ url: "https://cdn.test/own-photo.jpg", origin: "user", role: "user-upload", status: "ready" }];
+  await record.save();
+  const callsBefore = textCalls;
+
+  const added = await asAdmin(`/api/admin/product-drafts/${draft.id}/images`, { method: "PATCH", body: JSON.stringify({ action: "add", url: "https://cdn.test/second-owner-photo.jpg" }) });
+
+  assert.equal(added.status, 200);
+  assert.equal(textCalls, callsBefore, "no provider call: planning slots is free");
+  assert.equal(added.body.images.length, 5, "the set is topped up to five slots");
+  assert.equal(added.body.images.filter((i) => i.status === "pending").length, 3, "three views are waiting for a deliberate generate");
+  assert.equal(added.body.pendingRevision.hasChanges, true);
+
+  const liveAfter = await call(`/api/products/${slug}`);
+  assert.equal(liveAfter.body.imageUrl, liveBefore.body.imageUrl, "the live images do not change until approval");
+});
+
+test("adding a photo when every slot is planned replaces a never-generated slot, not a finished image", async () => {
+  const draft = await createDraft();                 // five pending slots
+  const record = await ProductDraft.findById(draft.id);
+  record.images[0].url = "https://cdn.test/done.jpg"; record.images[0].status = "ready"; record.images[0].origin = "ai";
+  await record.save();
+
+  const added = await asAdmin(`/api/admin/product-drafts/${draft.id}/images`, { method: "PATCH", body: JSON.stringify({ action: "add", url: "https://cdn.test/mine.jpg" }) });
+
+  assert.equal(added.status, 200);
+  assert.equal(added.body.images.length, 5);
+  assert.ok(added.body.images.some((i) => i.url === "https://cdn.test/done.jpg"), "the finished image is preserved");
+  assert.ok(added.body.images.some((i) => i.url === "https://cdn.test/mine.jpg" && i.origin === "user"));
+});

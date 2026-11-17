@@ -2996,9 +2996,29 @@ app.patch("/api/admin/product-drafts/:id/images", requireAdminAuth, async (req, 
     const url = String(req.body?.url || "").trim();
     if (!url) return res.status(400).json({ message: "Image URL is required." });
     if (draft.images.length >= MAX_DRAFT_IMAGES) {
-      return res.status(400).json({ message: `A listing holds at most ${MAX_DRAFT_IMAGES} images.` });
+      // Make room by dropping a slot that was planned but never generated.
+      const idx = draft.images.findIndex((image) => image.status === "pending" && !image.url);
+      if (idx === -1) {
+        return res.status(400).json({ message: `A listing holds at most ${MAX_DRAFT_IMAGES} images.` });
+      }
+      draft.images.splice(idx, 1);
     }
     draft.images.push({ url, origin: "user", role: "user-upload", status: "ready" });
+
+    // The owner's own photo is a legitimate reference, so the missing views can now
+    // be planned. Only slots are created here (free); generating them is a separate,
+    // deliberate step.
+    if (draft.productId) {
+      const planned = planMissingImages({
+        existing: draft.images,
+        sourceImages: draft.provenance?.sourceImages || [],
+        briefs: draft.imageBriefs,
+      });
+      for (const entry of planned.additions) {
+        draft.images.push({ url: "", origin: "ai", role: entry.role, prompt: entry.prompt, status: "pending" });
+      }
+      if (planned.additions.length > 0) draft.steps.images.status = "pending";
+    }
   } else if (action === "delete") {
     const imageId = String(req.body?.imageId || "");
     const image = draft.images.id(imageId);
