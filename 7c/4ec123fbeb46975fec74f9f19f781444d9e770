@@ -1,0 +1,31 @@
+backend/api/index.js
+  s_755b8269fb6f42::t_3dbd239aea6a16 1-4
+backend/lib/runtime-env.js
+  s_755b8269fb6f42::t_3dbd239aea6a16 77-95,101-102
+backend/lib/runtime-env.test.js
+  s_755b8269fb6f42::t_3dbd239aea6a16 76-101
+frontend/lib/constants.ts
+  s_755b8269fb6f42::t_ad4bc3f8e0c287 15-21
+frontend/next.config.ts
+  s_755b8269fb6f42::t_ad4bc3f8e0c287 3-9,11
+frontend/app/api/[...path]/route.ts
+  s_755b8269fb6f42::t_ad4bc3f8e0c287 1-71
+backend/.env.example
+  s_755b8269fb6f42::t_a19a97f018b70f 20-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c4ec123fbeb46975fec74f9f19f781444d9e770",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
