@@ -1,0 +1,24 @@
+frontend/app/admin/products/draft/[id]/page.tsx
+  s_755b8269fb6f42::t_6dd5f3be3d0360 3,40-43,68-103,243-247
+  s_755b8269fb6f42::t_315b92fb5d2496 248
+backend/lib/ai/providers.js
+  s_755b8269fb6f42::t_1b8693145134e5 148-157
+backend/lib/ai/providers.test.js
+  s_755b8269fb6f42::t_d4a77f185ee0b0 1-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc85ba18b82e85b9c953dfb113b44a704c24eb52",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
