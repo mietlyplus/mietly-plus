@@ -145,7 +145,16 @@ async function geminiImageCall(brief, references) {
 
   const payload = await geminiFetch(
     `/models/${GEMINI_IMAGE_MODEL}:generateContent`,
-    { contents: [{ role: "user", parts }] },
+    {
+      contents: [{ role: "user", parts }],
+      generationConfig: {
+        // Documented values. Asking for TEXT+IMAGE explicitly, and pinning the
+        // size to 1K (the documented default, ~$0.067/image), keeps cost
+        // predictable instead of depending on the model's defaults.
+        responseModalities: ["TEXT", "IMAGE"],
+        imageConfig: { aspectRatio: "1:1", imageSize: "1K" },
+      },
+    },
     IMAGE_TIMEOUT_MS
   );
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useCallback, useEffect, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -37,6 +37,10 @@ export default function ProductDraftReviewPage() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [autoProgress, setAutoProgress] = useState("");
+  // Guards the one-shot auto-run below against re-renders and StrictMode's
+  // double effect, so a draft can never start two generation passes.
+  const autoRunStartedRef = useRef(false);
 
   useEffect(() => {
     setToken(localStorage.getItem("admin_token") || "");
@@ -60,6 +64,42 @@ export default function ProductDraftReviewPage() {
     if (!token || !draftId) return;
     load(token);
   }, [token, draftId, load]);
+
+  // "Create Draft" should leave a finished draft, not five empty slots. Once the
+  // draft loads, generate each pending image in turn -- one request per image so
+  // each stays inside the serverless limit.
+  //
+  // Spend is bounded by construction: only images still "pending" are touched,
+  // there is no automatic retry, and the pass stops at the first failure. A
+  // failed image stays visible with its own Regenerate button, so a retry is
+  // always a deliberate tap.
+  useEffect(() => {
+    if (!token || !draft || autoRunStartedRef.current) return;
+    if (draft.status !== "ready") return;
+
+    const pending = draft.images.filter((image) => image.status === "pending" && image.origin !== "user");
+    if (pending.length === 0) return;
+
+    autoRunStartedRef.current = true;
+
+    (async () => {
+      let done = 0;
+      for (const image of pending) {
+        setAutoProgress(`Generating image ${done + 1} of ${pending.length}…`);
+        try {
+          const next = await generateDraftImage(token, draftId, image.id);
+          setDraft(next);
+          const result = next.images.find((entry) => entry.id === image.id);
+          if (!result || result.status !== "ready") break;
+          done += 1;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Image generation stopped.");
+          break;
+        }
+      }
+      setAutoProgress("");
+    })();
+  }, [token, draft, draftId]);
 
   const run = async (label: string, action: () => Promise<ProductDraft | void>) => {
     setBusy(label);
@@ -199,6 +239,12 @@ export default function ProductDraftReviewPage() {
           ) : null}
         </dl>
       </div>
+
+      {autoProgress ? (
+        <div className="rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-900">
+          {autoProgress}
+        </div>
+      ) : null}
 
       {needsResume ? (
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
