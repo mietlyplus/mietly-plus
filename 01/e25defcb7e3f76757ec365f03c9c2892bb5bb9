@@ -1,0 +1,19 @@
+docs/product-automation.md
+  s_fd2dc7803b701c::t_3777a834153e68 116-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "01e25defcb7e3f76757ec365f03c9c2892bb5bb9",
+  "prompts": {},
+  "sessions": {
+    "s_fd2dc7803b701c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_fd2dc7803b701c",
+        "model": "unknown"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
