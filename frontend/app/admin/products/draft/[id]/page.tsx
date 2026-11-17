@@ -339,9 +339,9 @@ export default function ProductDraftReviewPage() {
       ) : null}
 
       {completeness && !completeness.complete ? (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="rounded-xl border border-zinc-300 bg-zinc-50 p-4 text-sm text-zinc-700">
           <p className="font-semibold">
-            {completeness.ready} of {completeness.target} images ready — this listing is not complete
+            {completeness.ready} of {completeness.target} images ready — five is a target, not a requirement
           </p>
           <ul className="mt-1 list-disc space-y-0.5 pl-5">
             {completeness.reasons.map((reason) => (
