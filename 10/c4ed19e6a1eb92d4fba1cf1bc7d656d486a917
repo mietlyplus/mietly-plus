@@ -1,0 +1,23 @@
+backend/lib/preview-media.test.js
+  s_755b8269fb6f42::t_f06bd00bfa7518 50-64
+backend/index.js
+  s_755b8269fb6f42::t_f06bd00bfa7518 14,3196,3202-3203,3211
+backend/lib/preview-media.js
+  s_755b8269fb6f42::t_f06bd00bfa7518 48-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "10c4ed19e6a1eb92d4fba1cf1bc7d656d486a917",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
