@@ -1,0 +1,28 @@
+backend/index.js
+  s_755b8269fb6f42::t_6cdb9e4ac77f4b 2503-2513,3063-3081
+  s_755b8269fb6f42::t_e54777f4a2e496 3082-3083
+backend/integration/product-automation.test.js
+  s_755b8269fb6f42::t_713fbc3e0736cb 37,844,846,865-866
+  s_755b8269fb6f42::t_f949ee46e30acd 840-841
+  s_755b8269fb6f42::t_6cdb9e4ac77f4b 825-839,842-843,845,847-864,867-869
+frontend/app/admin/products/draft/[id]/page.tsx
+  s_755b8269fb6f42::t_d8ff5829abc6bc 300-324
+frontend/lib/types.ts
+  s_755b8269fb6f42::t_7cc46161f70f06 323-331
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac57b4aecc93eb5a326057d8319e81da3fe44f62",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
