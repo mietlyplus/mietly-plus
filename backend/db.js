@@ -1,10 +1,12 @@
 const mongoose = require("mongoose");
+const { resolveDatabaseTarget } = require("./lib/runtime-env");
 
 let cachedConnectionPromise = null;
-const DEFAULT_DB_NAME = "mietlyplus";
 
 async function connectDatabase() {
-  const mongoUri = process.env.MONGODB_URI;
+  // On a preview deployment this prefers MONGODB_URI_PREVIEW / MONGODB_DB_NAME_PREVIEW;
+  // everywhere else it resolves exactly as it always has.
+  const { uri: mongoUri, dbName } = resolveDatabaseTarget();
   if (!mongoUri) {
     throw new Error("MONGODB_URI is not configured.");
   }
@@ -14,9 +16,6 @@ async function connectDatabase() {
   }
 
   if (!cachedConnectionPromise) {
-    const configuredDbName = String(process.env.MONGODB_DB_NAME || "").trim();
-    const dbName = configuredDbName || DEFAULT_DB_NAME;
-
     cachedConnectionPromise = mongoose
       .connect(mongoUri, {
         dbName,

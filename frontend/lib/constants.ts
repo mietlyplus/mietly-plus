@@ -12,8 +12,13 @@ const vercelBaseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL
 const browserOrigin = typeof window !== "undefined" ? window.location.origin : "";
 const isDevelopment = process.env.NODE_ENV !== "production";
 
-export const API_BASE_URL =
-  envApiBaseUrl ||
+// Set by next.config.ts on Preview builds only: call this origin, which proxies
+// to the preview backend, instead of the base URL shared with production.
+const useSameOriginProxy = process.env.NEXT_PUBLIC_API_MODE === "preview-proxy";
+
+export const API_BASE_URL = useSameOriginProxy
+  ? browserOrigin || normalizeBaseUrl(vercelBaseUrl)
+  : envApiBaseUrl ||
   browserOrigin ||
   envAppBaseUrl ||
   normalizeBaseUrl(vercelBaseUrl) ||

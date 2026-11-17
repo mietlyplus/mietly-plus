@@ -5,6 +5,17 @@ import { useEffect, useState } from "react";
 import { deleteProduct, fetchAdminProducts } from "@/lib/api";
 import { Product } from "@/lib/types";
 
+// Mirrors the server's pricing rule (backend/lib/pricing.js): an offer only
+// applies when it is above 0 and below the normal rate. An unset offer (0) means
+// "no offer", not "drops to EUR 0", so it must not be drawn as a price change.
+function formatRate(rate?: number, offer?: number) {
+  const base = Number(rate) || 0;
+  const off = Number(offer) || 0;
+  if (base <= 0) return "not offered";
+  if (off > 0 && off < base) return `EUR ${base} → EUR ${off}`;
+  return `EUR ${base}`;
+}
+
 export default function AdminProductsListPage() {
   const [adminToken] = useState(() => {
     if (typeof window === "undefined") return "";
@@ -74,7 +85,7 @@ export default function AdminProductsListPage() {
                 </div>
                 <p className="truncate text-xs text-zinc-500">{product.category?.name.en || "Uncategorized"}</p>
                 <p className="text-xs text-zinc-500">
-                  EUR {product.monthlyPrice}/month | Weekly: EUR {product.buyerPrice || 0} → EUR {product.offerPrice || 0} | Monthly: EUR {product.monthlyBuyerPrice || 0} → EUR {product.monthlyOfferPrice || 0} | {product.minimumRentalWeeks}-{product.maximumRentalWeeks} weeks | {product.minimumRentalMonths}-{product.maximumRentalMonths} months | stock {product.stock} ({product.stockStatus.replace("_", " ")})
+                  EUR {product.monthlyPrice}/month | Weekly: {formatRate(product.buyerPrice, product.offerPrice)} | Monthly: {formatRate(product.monthlyBuyerPrice, product.monthlyOfferPrice)} | {product.minimumRentalWeeks}-{product.maximumRentalWeeks} weeks | {product.minimumRentalMonths}-{product.maximumRentalMonths} months | stock {product.stock} ({product.stockStatus.replace("_", " ")})
                 </p>
                 <p className="text-xs text-zinc-500">
                   Deposit EUR {product.securityDeposit} | {product.refundable ? "refundable" : "non-refundable"} | {product.isActive ? "active" : "inactive"}

@@ -1,5 +1,15 @@
 import { API_BASE_URL, FALLBACK_CATEGORIES } from "./constants";
-import { Banner, BlogPost, Brand, Category, Order, Product, SupportRequest } from "./types";
+import {
+  AiProviderStatus,
+  Banner,
+  BlogPost,
+  Brand,
+  Category,
+  Order,
+  Product,
+  ProductDraft,
+  SupportRequest,
+} from "./types";
 
 function buildApiBaseCandidates() {
   const candidates = [API_BASE_URL];
@@ -596,7 +606,7 @@ export async function deleteUserAccount(token: string, payload: { password: stri
   return response.json() as Promise<{ message: string }>;
 }
 
-export async function adminLogin(payload: { email: string; password: string }) {
+export async function adminLogin(payload: { identifier: string; password: string }) {
   const response = await fetch(`${API_BASE_URL}/api/admin/auth/login`, {
     method: "POST",
     headers: {
@@ -1359,4 +1369,157 @@ export async function updateSupportRequestStatus(
   }
 
   return response.json() as Promise<SupportRequest>;
+}
+
+
+// ---------------------------------------------------------------------------
+// Product automation (product-link + AI drafts)
+// ---------------------------------------------------------------------------
+
+async function adminJson<T>(path: string, adminToken: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+      ...(init?.headers || {}),
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Request failed." }));
+    throw new Error(error.message || "Request failed.");
+  }
+
+  return (await response.json()) as T;
+}
+
+export async function fetchAiProviderStatus(adminToken: string) {
+  return adminJson<AiProviderStatus>("/api/admin/product-drafts/providers", adminToken);
+}
+
+export async function fetchProductDrafts(adminToken: string) {
+  return adminJson<ProductDraft[]>("/api/admin/product-drafts", adminToken);
+}
+
+export async function fetchProductDraft(adminToken: string, id: string) {
+  return adminJson<ProductDraft>(`/api/admin/product-drafts/${encodeURIComponent(id)}`, adminToken);
+}
+
+export async function createProductDraft(
+  adminToken: string,
+  payload: {
+    sourceUrl: string;
+    weeklyPrice: number;
+    monthlyPrice: number;
+    instruction?: string;
+    imageUrls?: string[];
+    submissionKey?: string;
+  }
+) {
+  return adminJson<ProductDraft>("/api/admin/product-drafts", adminToken, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function generateDraftImage(adminToken: string, draftId: string, imageId: string, prompt?: string) {
+  return adminJson<ProductDraft>(
+    `/api/admin/product-drafts/${encodeURIComponent(draftId)}/images/${encodeURIComponent(imageId)}/generate`,
+    adminToken,
+    { method: "POST", body: JSON.stringify({ prompt }) }
+  );
+}
+
+export async function updateDraftImages(
+  adminToken: string,
+  draftId: string,
+  body: { action: "add" | "delete" | "replace" | "reorder" | "primary"; imageId?: string; url?: string; imageIds?: string[] }
+) {
+  return adminJson<ProductDraft>(`/api/admin/product-drafts/${encodeURIComponent(draftId)}/images`, adminToken, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function regenerateDraftText(adminToken: string, draftId: string, instruction?: string) {
+  return adminJson<ProductDraft>(
+    `/api/admin/product-drafts/${encodeURIComponent(draftId)}/regenerate-text`,
+    adminToken,
+    { method: "POST", body: JSON.stringify({ instruction }) }
+  );
+}
+
+export async function publishProductDraft(
+  adminToken: string,
+  draftId: string,
+  options: { confirmSourceImagery?: boolean } = {}
+) {
+  return adminJson<{ message: string; draft: ProductDraft }>(
+    `/api/admin/product-drafts/${encodeURIComponent(draftId)}/publish`,
+    adminToken,
+    { method: "POST", body: JSON.stringify({ confirm: true, ...options }) }
+  );
+}
+
+/** Continues a draft. With no body it finishes an interrupted job; with an
+ *  alternate link, pasted details and/or reference photos it carries on from
+ *  better source material. Prices and existing photos are kept. */
+export async function resumeProductDraft(
+  adminToken: string,
+  draftId: string,
+  input: { sourceUrl?: string; details?: string; imageUrls?: string[] } = {}
+) {
+  return adminJson<ProductDraft>(`/api/admin/product-drafts/${encodeURIComponent(draftId)}/resume`, adminToken, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Records the owner's category/brand choice (existing ones only). */
+export async function updateDraftTaxonomy(
+  adminToken: string,
+  draftId: string,
+  input: { categoryId?: string; brandId?: string }
+) {
+  return adminJson<ProductDraft>(`/api/admin/product-drafts/${encodeURIComponent(draftId)}/taxonomy`, adminToken, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Tops up missing image slots (free; generation is still one image at a time). */
+export async function rebuildDraftImages(adminToken: string, draftId: string) {
+  return adminJson<ProductDraft>(`/api/admin/product-drafts/${encodeURIComponent(draftId)}/rebuild-images`, adminToken, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+/** Applies a pending revision to an already-published product. */
+export async function applyDraftRevision(
+  adminToken: string,
+  draftId: string,
+  options: { confirmSourceImagery?: boolean } = {}
+) {
+  return adminJson<{ message: string; draft: ProductDraft }>(
+    `/api/admin/product-drafts/${encodeURIComponent(draftId)}/apply-revision`,
+    adminToken,
+    { method: "POST", body: JSON.stringify({ confirm: true, ...options }) }
+  );
+}
+
+export async function discardDraftRevision(adminToken: string, draftId: string) {
+  return adminJson<{ message: string; draft: ProductDraft }>(
+    `/api/admin/product-drafts/${encodeURIComponent(draftId)}/discard-revision`,
+    adminToken,
+    { method: "POST", body: "{}" }
+  );
+}
+
+export async function discardProductDraft(adminToken: string, draftId: string) {
+  return adminJson<{ message: string }>(`/api/admin/product-drafts/${encodeURIComponent(draftId)}`, adminToken, {
+    method: "DELETE",
+  });
 }

@@ -1,3 +1,7 @@
+// Must run before ../index is loaded: a preview deployment swaps in its own
+// JWT secret so its tokens are not interchangeable with production's.
+require("../lib/runtime-env").applyPreviewOverrides();
+
 const { app, initializeApp } = require("../index");
 
 function normalizePathForExpress(req) {

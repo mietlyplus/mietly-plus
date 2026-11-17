@@ -41,6 +41,8 @@ export function AdminShell({ children }: AdminShellProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const pageTitle = useMemo(() => {
+    if (pathname.startsWith("/admin/products/create-from-link")) return "Create from link";
+    if (pathname.startsWith("/admin/products/draft")) return "Review draft";
     if (pathname === "/admin/products") return "Add Product";
     if (pathname.startsWith("/admin/products/list")) return "Product List";
     if (pathname.startsWith("/admin/products/bulk")) return "Add Bulk Products";
@@ -131,6 +133,7 @@ export function AdminShell({ children }: AdminShellProps) {
                 <div className="space-y-1 pl-4">
                   {renderNavLink("List Products", "/admin/products/list")}
                   {renderNavLink("Add Product", "/admin/products")}
+                  {renderNavLink("Create from Link", "/admin/products/create-from-link")}
                   {renderNavLink("Bulk Import", "/admin/products/bulk")}
                 </div>
               ) : null}
@@ -181,6 +184,7 @@ export function AdminShell({ children }: AdminShellProps) {
                   <div className="space-y-1">
                     {renderNavLink("List Products", "/admin/products/list")}
                     {renderNavLink("Add Product", "/admin/products")}
+                    {renderNavLink("Create from Link", "/admin/products/create-from-link")}
                     {renderNavLink("Bulk Import", "/admin/products/bulk")}
                   </div>
                 </div>

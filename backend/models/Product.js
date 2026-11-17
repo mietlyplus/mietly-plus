@@ -1,5 +1,12 @@
 const mongoose = require("mongoose");
 
+// A draft (isActive: false) may exist before its category and brand are chosen.
+// Publication re-checks both (lib/publication-rules.js), and the manual and CSV
+// create routes validate them explicitly, so nothing live can lack either.
+const requiredWhenActive = function () {
+  return this.isActive !== false;
+};
+
 const productSchema = new mongoose.Schema(
   {
     title: {
@@ -59,7 +66,7 @@ const productSchema = new mongoose.Schema(
     brandId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Brand",
-      required: true,
+      required: requiredWhenActive,
     },
     tags: {
       type: [String],
@@ -68,7 +75,7 @@ const productSchema = new mongoose.Schema(
     categoryId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",
-      required: true,
+      required: requiredWhenActive,
     },
     monthlyPrice: {
       type: Number,
