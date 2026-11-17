@@ -176,6 +176,49 @@ function readSpecsFromDom(html) {
   return specs;
 }
 
+// Many shops list specifications as <li> items under a heading such as
+// "Technische Daten" rather than in a table. Only lists that sit under a
+// spec-like heading are read, so navigation menus and footers are never mistaken
+// for product facts. "Key: Value" lines become specifications; other lines are
+// kept verbatim as source features (they are facts as the source states them,
+// not something to be re-derived).
+const SPEC_HEADING = /(technische daten|technische informationen|haupteigenschaften|produktmerkmale|produkteigenschaften|produktinformationen|standardinformationen|lieferumfang|eigenschaften|spezifikationen|technical data|tech specs|specifications|key features|product features|what.s in the box|in the box|included)/i;
+const SECTION_WINDOW = 7000;
+const MAX_FEATURES = 40;
+
+function readListsUnderSpecHeadings(html) {
+  const specs = [];
+  const features = [];
+  const headings = [...html.matchAll(/<h[2-4]\b[^>]*>([\s\S]{0,160}?)<\/h[2-4]>/gi)];
+
+  headings.forEach((match, index) => {
+    const headingText = clean(match[1], 60);
+    if (!SPEC_HEADING.test(headingText)) return;
+    const start = match.index + match[0].length;
+    const nextHeading = headings[index + 1] ? headings[index + 1].index : html.length;
+    const section = html.slice(start, Math.min(nextHeading, start + SECTION_WINDOW));
+
+    for (const item of section.matchAll(/<li\b[^>]*>([\s\S]{0,300}?)<\/li>/gi)) {
+      const text = clean(item[1], 160);
+      if (text.length < 3) continue;
+      const pair = text.match(/^([^:]{2,60}):\s*(.{1,120})$/);
+      if (pair) {
+        const key = pair[1].trim();
+        if (!specs.some((spec) => spec.key.toLowerCase() === key.toLowerCase()) && specs.length < MAX_SPECS) {
+          specs.push({ key, value: pair[2].trim() });
+        }
+      } else {
+        // Tagged with its section, so "Lieferumfang" (what is included) is not
+        // mistaken for a feature once the line is read on its own.
+        const tagged = `${headingText}: ${text}`.slice(0, 200);
+        if (!features.includes(tagged) && features.length < MAX_FEATURES) features.push(tagged);
+      }
+    }
+  });
+
+  return { specs, features };
+}
+
 function readImagesFromDom(html, baseUrl, list) {
   const re = /<img\b[^>]*?\bsrc=["']([^"']+)["'][^>]*>/gi;
   let match;
@@ -212,6 +255,7 @@ function extractProductFacts(html, baseUrl) {
     description: "",
     category: "",
     specifications: [],
+    featureLines: [],
   };
 
   // --- 1. JSON-LD (most reliable) -----------------------------------------
@@ -270,6 +314,19 @@ function extractProductFacts(html, baseUrl) {
       if (!usedStrategies.includes("dom")) usedStrategies.push("dom");
       facts.specifications = domSpecs;
     }
+  }
+  // Lists under spec-like headings fill gaps the structured data left, and never
+  // override it.
+  const lists = readListsUnderSpecHeadings(safeHtml);
+  if (lists.specs.length || lists.features.length) {
+    if (!usedStrategies.includes("dom-lists")) usedStrategies.push("dom-lists");
+    for (const spec of lists.specs) {
+      if (facts.specifications.length >= MAX_SPECS) break;
+      if (!facts.specifications.some((existing) => existing.key.toLowerCase() === spec.key.toLowerCase())) {
+        facts.specifications.push(spec);
+      }
+    }
+    facts.featureLines = lists.features;
   }
   if (sourceImages.length === 0) readImagesFromDom(safeHtml, baseUrl, sourceImages);
 

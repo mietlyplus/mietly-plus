@@ -44,6 +44,8 @@ function buildListingPrompt({ facts, adminDetails, adminInstruction, categories,
     `description: ${facts.description || "(none)"}`,
     `specifications:`,
     ...(facts.specifications || []).map((s) => `  - ${s.key}: ${s.value}`),
+    `feature_lines (verbatim from the source page):`,
+    ...(facts.featureLines || []).map((line) => `  - ${line}`),
   ].join("\n");
 
   const categoryList = categories

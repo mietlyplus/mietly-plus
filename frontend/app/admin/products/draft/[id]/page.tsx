@@ -143,7 +143,11 @@ export default function ProductDraftReviewPage() {
 
   const onPublish = async (confirmSourceImagery = false) => {
     if (!token) return;
-    if (!window.confirm("Publish this product to the live Leihfluss catalogue?")) return;
+    const short = draft?.imageCompleteness && draft.imageCompleteness.missing > 0;
+    const prompt = short
+      ? `Only ${draft?.imageCompleteness.ready} of ${draft?.imageCompleteness.target} images are ready. Publish to the live catalogue anyway?`
+      : "Publish this product to the live Leihfluss catalogue?";
+    if (!window.confirm(prompt)) return;
     setBusy("publish");
     setError("");
     setMessage("");

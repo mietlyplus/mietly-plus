@@ -800,3 +800,24 @@ test("category and brand are required for an active product, but not for a priva
   });
   assert.equal(viaRoute.status, 400, "the manual/CSV create route still demands both");
 });
+
+test("a draft whose model proposed only two views reaches five once the owner adds a photo", async () => {
+  const draft = await createDraft({ sourceUrl: DENIED_URL });
+  await resume(draft.id, { details: "A product described by the owner" });
+  const record = await ProductDraft.findById(draft.id);
+  record.imageBriefs = [{ role: "hero", prompt: "front", requiresReference: false }, { role: "detail", prompt: "panel", requiresReference: true }];
+  record.images = [
+    { url: "https://cdn.test/g1.jpg", origin: "ai", role: "hero", status: "ready" },
+    { url: "https://cdn.test/g2.jpg", origin: "ai", role: "detail", status: "ready" },
+  ];
+  await record.save();
+  const callsBefore = textCalls;
+
+  const result = await resume(draft.id, { imageUrls: ["https://cdn.test/owner.jpg"] });
+
+  assert.equal(textCalls, callsBefore, "no paid text call");
+  assert.equal(result.body.images.length, 5);
+  assert.deepEqual(result.body.images.slice(0, 2).map((i) => i.url), ["https://cdn.test/g1.jpg", "https://cdn.test/g2.jpg"], "generated images preserved");
+  assert.equal(result.body.images.filter((i) => i.status === "pending").length, 2);
+  assert.equal(result.body.imageCompleteness.ready, 3);
+});

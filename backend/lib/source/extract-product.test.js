@@ -137,3 +137,58 @@ test("a @graph wrapper is traversed", () => {
   assert.equal(out.facts.name, "Graph Product");
   assert.equal(out.facts.brand, "ACME");
 });
+
+// ---------------------------------------------------------------------------
+// Specification lists under spec-like headings (modelled on a manufacturer shop)
+// ---------------------------------------------------------------------------
+
+const LIST_PAGE = `<html><head><title>Mikrowelle X</title></head><body>
+  <nav><ul><li>Angebote: Sale</li><li>Hilfe</li><li>Kontakt: 0800 123</li></ul></nav>
+  <h3>Haupteigenschaften</h3>
+  <ul><li>Mikrowellenleistung ca. 900W</li><li>Garinnenraum ca. 25 L</li></ul>
+  <h3>Lieferumfang</h3>
+  <ul><li>Mikrowelle X</li><li>Metall-Drehteller</li></ul>
+  <h3>Standardinformationen</h3>
+  <ul><li>Gewicht: 18,3 kg</li><li>Garantie: 24 Monate</li></ul>
+  <h3>Bewertungen</h3>
+  <ul><li>Super: 5 Sterne</li></ul>
+  <footer><ul><li>Impressum: Details</li></ul></footer>
+</body></html>`;
+
+test("key/value lines under spec headings become specifications", () => {
+  const out = extractProductFacts(LIST_PAGE, "https://shop.example.com/x");
+  assert.deepEqual(out.facts.specifications, [
+    { key: "Gewicht", value: "18,3 kg" },
+    { key: "Garantie", value: "24 Monate" },
+  ]);
+  assert.ok(out.usedStrategies.includes("dom-lists"));
+});
+
+test("other lines are kept verbatim and tagged with their section, so 'included' is not lost", () => {
+  const out = extractProductFacts(LIST_PAGE, "https://shop.example.com/x");
+  assert.ok(out.facts.featureLines.includes("Haupteigenschaften: Mikrowellenleistung ca. 900W"));
+  assert.ok(out.facts.featureLines.includes("Lieferumfang: Metall-Drehteller"));
+});
+
+test("navigation, review and footer lists are never read as product facts", () => {
+  const out = extractProductFacts(LIST_PAGE, "https://shop.example.com/x");
+  const everything = JSON.stringify(out.facts);
+  for (const junk of ["Sale", "0800", "Sterne", "Impressum"]) {
+    assert.ok(!everything.includes(junk), `${junk} must not be extracted`);
+  }
+});
+
+test("structured data wins: list specs only fill gaps and never override it", () => {
+  const html = `<html><head><script type="application/ld+json">{"@type":"Product","name":"P","additionalProperty":[{"name":"Gewicht","value":"2 kg"}]}</script></head><body>
+    <h3>Technische Daten</h3><ul><li>Gewicht: 99 kg</li><li>Farbe: Schwarz</li></ul></body></html>`;
+  const out = extractProductFacts(html, "https://shop.example.com/x");
+  const weight = out.facts.specifications.filter((s) => s.key === "Gewicht");
+  assert.deepEqual(weight, [{ key: "Gewicht", value: "2 kg" }], "the JSON-LD value stands");
+  assert.ok(out.facts.specifications.some((s) => s.key === "Farbe"), "the gap is filled");
+});
+
+test("a page with no spec headings gains nothing from list parsing", () => {
+  const out = extractProductFacts("<html><title>X</title><body><ul><li>Gewicht: 5 kg</li></ul></body></html>", "https://shop.example.com/x");
+  assert.deepEqual(out.facts.specifications, []);
+  assert.deepEqual(out.facts.featureLines, []);
+});

@@ -80,3 +80,25 @@ test("publication needs verified source information", () => {
   const withDetails = evaluatePublicationBlockers({ product, draft: { ...base, provenance: { extractedFacts: {} }, pastedDetails: "specs" } });
   assert.ok(!withDetails.blockers.some((b) => /verified source/i.test(b)));
 });
+
+test("when the model proposed only two views, the owner's photo tops the set up to five", () => {
+  const modelBriefs = [
+    { role: "hero", prompt: "front", requiresReference: false },
+    { role: "detail", prompt: "control panel", requiresReference: true },
+  ];
+  const existing = [
+    { role: "hero", url: "a", origin: "ai", status: "ready" },
+    { role: "detail", url: "b", origin: "ai", status: "ready" },
+    { role: "user-upload", url: "c", origin: "user", status: "ready" },
+  ];
+  const out = planMissingImages({ existing, sourceImages: [], briefs: modelBriefs });
+  assert.equal(out.additions.length, 2, "five slots in total");
+  assert.ok(out.additions.every((a) => !["hero", "detail"].includes(a.role)), "no role is duplicated");
+});
+
+test("without an owner photo the model's restraint is respected", () => {
+  const modelBriefs = [{ role: "hero", prompt: "front", requiresReference: false }, { role: "detail", prompt: "x", requiresReference: true }];
+  const existing = [{ role: "hero", url: "a", origin: "ai", status: "ready" }, { role: "detail", url: "b", origin: "ai", status: "ready" }];
+  const out = planMissingImages({ existing, sourceImages: ["https://x/y.jpg"], briefs: modelBriefs });
+  assert.equal(out.additions.length, 0, "a retailer photo alone does not license invented extra views");
+});

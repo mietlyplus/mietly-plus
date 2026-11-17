@@ -122,8 +122,17 @@ function planMissingImages({ existing, sourceImages, briefs }) {
   if (missing === 0) return { additions: [], hasReference, reason: "" };
 
   const takenRoles = new Set(current.map((image) => image.role));
-  const pool = (briefs && briefs.length ? briefs : DEFAULT_IMAGE_BRIEFS)
-    .filter((brief) => !takenRoles.has(brief.role))
+  const hasOwnerPhoto = current.some((image) => image.origin === "user" && image.url);
+  const modelBriefs = briefs && briefs.length ? briefs : [];
+
+  // The model may propose fewer than five views when the reference is thin, and
+  // that restraint is respected. Once the owner supplies their own photo the
+  // missing views are legitimate to create, so the set is topped up with the
+  // standard views rather than stopping at the model's shorter list.
+  const candidates = modelBriefs.length === 0 || hasOwnerPhoto ? [...modelBriefs, ...DEFAULT_IMAGE_BRIEFS] : modelBriefs;
+  const seen = new Set();
+  const pool = candidates
+    .filter((brief) => !takenRoles.has(brief.role) && !seen.has(brief.role) && seen.add(brief.role))
     .filter((brief) => !brief.requiresReference || hasReference)
     .slice(0, missing);
 
