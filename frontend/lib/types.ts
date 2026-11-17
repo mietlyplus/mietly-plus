@@ -292,7 +292,11 @@ export type ProductDraft = {
   weeklyPrice: number;
   monthlyPrice: number;
   instruction: string;
-  status: "generating" | "ready" | "failed" | "published" | "discarded";
+  pastedDetails: string;
+  usableSource: boolean;
+  needs: { source: boolean; taxonomy: boolean; images: boolean };
+  taxonomy: { categoryResolved: boolean | null; brandResolved: boolean | null; confirmed: boolean } | null;
+  status: "generating" | "needs_source" | "ready" | "failed" | "published" | "discarded";
   steps: { extraction: ProductDraftStep; text: ProductDraftStep; images: ProductDraftStep };
   warnings: ProductDraftWarning[];
   images: ProductDraftImage[];
@@ -334,6 +338,8 @@ export type ProductDraft = {
   imageError?: string;
   textError?: string;
   alreadyComplete?: boolean;
+  imageNote?: string;
+  addedSlots?: number;
   resumeRequired?: boolean;
   requiresSourceImageryConfirmation?: boolean;
 };

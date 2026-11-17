@@ -26,8 +26,8 @@ const fixtureTextProvider = {
   model: "dev-fixture",
   isConfigured: () => true,
 
-  async generateListing({ facts, adminInstruction, categories, brands, hasUserPhotos }) {
-    const name = facts.name || "Unbenanntes Produkt";
+  async generateListing({ facts, adminDetails, adminInstruction, categories, brands, hasUserPhotos }) {
+    const name = facts.name || String(adminDetails || "").split("\n")[0].slice(0, 80) || "Unbenanntes Produkt";
     const brand = facts.brand || "";
     const matchedBrand = brands.find((b) => brand && b.name.toLowerCase() === brand.toLowerCase()) || null;
     const matchedCategory =

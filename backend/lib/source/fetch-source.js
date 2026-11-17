@@ -22,6 +22,15 @@ const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/125.0 Safari/537.36 LeihflussProductImporter/1.0";
 
+// A challenge page can come back as HTTP 200. Judged by its <title> only, so a
+// real product page that merely mentions "captcha" in a script is never refused.
+const CHALLENGE_TITLE = /^\s*(just a moment|attention required|access denied|robot check|are you a robot|security check|pardon our interruption|verify you are human|bot verification|zugriff verweigert)/i;
+
+function isBotChallengePage(html) {
+  const title = (String(html || "").match(/<title[^>]*>([\s\S]{0,160}?)<\/title>/i) || [])[1] || "";
+  return CHALLENGE_TITLE.test(title);
+}
+
 class SourceFetchError extends Error {
   constructor(code, message) {
     super(message);
@@ -215,6 +224,12 @@ async function fetchSourceDocument(rawUrl, { fetchImpl = fetch } = {}) {
     }
 
     const html = await readBodyWithLimit(response);
+    if (isBotChallengePage(html)) {
+      throw new SourceFetchError(
+        "ACCESS_DENIED",
+        "That page is a bot-check or access-denied page. Use another link or paste the product details."
+      );
+    }
     return { html, finalUrl: currentUrl.toString(), redirectChain: chain };
   }
 
@@ -309,6 +324,7 @@ async function fetchImageWithLimits(rawUrl, { fetchImpl = fetch, maxBytes = MAX_
 }
 
 module.exports = {
+  isBotChallengePage,
   SourceFetchError,
   assertPublicUrl,
   fetchImageWithLimits,

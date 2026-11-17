@@ -15,6 +15,8 @@ import {
   updateDraftImages,
   uploadProductImage,
 } from "@/lib/api";
+import { DraftSourcePanel } from "@/components/admin/draft-source-panel";
+import { DraftTaxonomyPanel } from "@/components/admin/draft-taxonomy-panel";
 import { ProductDraft } from "@/lib/types";
 
 function Warning({ code, message }: { code: string; message: string }) {
@@ -38,9 +40,9 @@ export default function ProductDraftReviewPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [autoProgress, setAutoProgress] = useState("");
-  // Guards the one-shot auto-run below against re-renders and StrictMode's
-  // double effect, so a draft can never start two generation passes.
-  const autoRunStartedRef = useRef(false);
+  // Guards the auto-run below against re-renders and StrictMode's double effect.
+  const autoRunInFlightRef = useRef(false);
+  const attemptedImageIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setToken(localStorage.getItem("admin_token") || "");
@@ -65,26 +67,29 @@ export default function ProductDraftReviewPage() {
     load(token);
   }, [token, draftId, load]);
 
-  // "Create Draft" should leave a finished draft, not five empty slots. Once the
-  // draft loads, generate each pending image in turn -- one request per image so
-  // each stays inside the serverless limit.
+  // "Create Draft" should leave a finished draft, not empty slots. Generate each
+  // pending image in turn -- one request per image so each stays inside the
+  // serverless limit.
   //
   // Spend is bounded by construction: only images still "pending" are touched,
-  // there is no automatic retry, and the pass stops at the first failure. A
-  // failed image stays visible with its own Regenerate button, so a retry is
-  // always a deliberate tap.
+  // each image id is attempted at most once per page session, there is no
+  // automatic retry, and the pass stops at the first failure. A failed image
+  // stays visible with its own Regenerate button, so a retry is always deliberate.
   useEffect(() => {
-    if (!token || !draft || autoRunStartedRef.current) return;
+    if (!token || !draft || autoRunInFlightRef.current) return;
     if (draft.status !== "ready") return;
 
-    const pending = draft.images.filter((image) => image.status === "pending" && image.origin !== "user");
+    const pending = draft.images.filter(
+      (image) => image.status === "pending" && image.origin !== "user" && !attemptedImageIdsRef.current.has(image.id)
+    );
     if (pending.length === 0) return;
 
-    autoRunStartedRef.current = true;
+    autoRunInFlightRef.current = true;
 
     (async () => {
       let done = 0;
       for (const image of pending) {
+        attemptedImageIdsRef.current.add(image.id);
         setAutoProgress(`Generating image ${done + 1} of ${pending.length}…`);
         try {
           const next = await generateDraftImage(token, draftId, image.id);
@@ -98,6 +103,7 @@ export default function ProductDraftReviewPage() {
         }
       }
       setAutoProgress("");
+      autoRunInFlightRef.current = false;
     })();
   }, [token, draft, draftId]);
 
@@ -191,7 +197,7 @@ export default function ProductDraftReviewPage() {
   const published = draft.status === "published";
   const completeness = draft.imageCompleteness;
   const reusedSourceImages = draft.images.filter((image) => image.origin === "source" && image.url).length;
-  const needsResume = !draft.productId;
+  const needsResume = !draft.productId && draft.status === "failed";
   const hasPendingRevision = draft.pendingRevision?.hasChanges;
 
   return (
@@ -200,7 +206,7 @@ export default function ProductDraftReviewPage() {
         <div>
           <h2 className="text-2xl font-black tracking-tight text-zinc-900">Review draft</h2>
           <p className="mt-1 text-sm text-zinc-600">
-            Status: <span className="font-semibold">{draft.status}</span>
+            Status: <span className="font-semibold">{draft.status === "needs_source" ? "Needs source information" : draft.status}</span>
             {published ? " — live on the storefront" : " — private, not visible to customers"}
           </p>
         </div>
@@ -258,6 +264,14 @@ export default function ProductDraftReviewPage() {
             {busy === "resume" ? "Resuming…" : "Resume generation"}
           </button>
         </div>
+      ) : null}
+
+      {!published && (draft.needs.source || draft.imageCompleteness.missing > 0) ? (
+        <DraftSourcePanel token={token} draft={draft} onDraft={setDraft} onMessage={setMessage} onError={setError} />
+      ) : null}
+
+      {!published && draft.product ? (
+        <DraftTaxonomyPanel token={token} draft={draft} onDraft={setDraft} onMessage={setMessage} onError={setError} />
       ) : null}
 
       {published && hasPendingRevision ? (
@@ -443,7 +457,7 @@ export default function ProductDraftReviewPage() {
           className="rounded-lg border border-zinc-300 px-4 py-2.5 text-sm font-semibold">
           {busy === "text" ? "Regenerating…" : "Regenerate text"}
         </button>
-        <button type="button" disabled={Boolean(busy) || published || fixtureImages.length > 0}
+        <button type="button" disabled={Boolean(busy) || published || fixtureImages.length > 0 || draft.needs.source || draft.needs.taxonomy}
           onClick={() => onPublish(false)}
           className="rounded-lg bg-[rgb(73,153,173)] px-4 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
           {busy === "publish" ? "Publishing…" : published ? "Published" : "Approve & Publish"}

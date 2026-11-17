@@ -935,7 +935,7 @@ function mapProduct(product) {
     brandId: brand ? brand.id : String(product.brandId || ""),
     brand: brand ? brand.name : product.brand || "",
     brandData: brand,
-    categoryId: category ? category.id : String(product.categoryId),
+    categoryId: category ? category.id : product.categoryId ? String(product.categoryId) : "",
     category,
     monthlyPrice: product.monthlyPrice,
     buyerPrice: product.buyerPrice || 0,
@@ -2418,12 +2418,50 @@ const {
   describeProviders,
   generateOneImage,
   MAX_IMAGES: MAX_DRAFT_IMAGES,
+  hasUsableSource,
   planImages,
+  planMissingImages,
   runExtraction,
   runTextGeneration,
 } = require("./lib/ai/draft-service");
 
+const CATEGORY_WARNING_CODES = new Set(["category_unresolved", "category_not_found", "no_matching_category", "category_uncertain"]);
+const BRAND_WARNING_CODES = new Set(["brand_unresolved", "brand_not_found", "no_matching_brand", "brand_uncertain"]);
+
 function mapDraft(draft, product) {
+  const productDto = product ? mapProduct(product) : null;
+  const usableSource = hasUsableSource({ facts: draft.provenance?.extractedFacts, adminDetails: draft.pastedDetails });
+
+  // A draft whose wording was not built from any real source is never "ready",
+  // whatever its stored status says (older drafts were saved that way).
+  const status = draft.status === "ready" && !usableSource ? "needs_source" : draft.status;
+
+  const categoryResolved = productDto ? Boolean(productDto.categoryId) : null;
+  const brandResolved = productDto ? Boolean(productDto.brandId) : null;
+  const hasImage = (draft.images || []).some((image) => image.url);
+
+  let warnings = (draft.warnings || []).filter((warning) => {
+    if (warning.code === "no_image_yet" && hasImage) return false;
+    if (warning.code === "placeholder_taxonomy") return false; // legacy: substitution no longer exists
+    if (categoryResolved && CATEGORY_WARNING_CODES.has(warning.code)) return false;
+    if (brandResolved && BRAND_WARNING_CODES.has(warning.code)) return false;
+    return true;
+  });
+
+  if (status === "needs_source" && !warnings.some((warning) => warning.code === "needs_source_information")) {
+    warnings = [
+      {
+        code: "needs_source_information",
+        field: "sourceUrl",
+        message:
+          "No verified product information was found, so nothing was written from it. Give a working source link, paste the product details, or add photos, then continue.",
+      },
+      ...warnings,
+    ];
+  }
+
+  const completeness = summariseImageCompleteness(draft);
+
   return {
     id: String(draft._id),
     productId: draft.productId ? String(draft.productId) : null,
@@ -2431,11 +2469,19 @@ function mapDraft(draft, product) {
     weeklyPrice: draft.weeklyPrice,
     monthlyPrice: draft.monthlyPrice,
     instruction: draft.instruction,
-    status: draft.status,
+    pastedDetails: draft.pastedDetails || "",
+    status,
+    usableSource,
+    needs: {
+      source: status === "needs_source",
+      taxonomy: productDto ? !categoryResolved || !brandResolved : false,
+      images: completeness.missing > 0,
+    },
+    taxonomy: productDto
+      ? { categoryResolved, brandResolved, confirmed: Boolean(draft.taxonomyConfirmed) }
+      : null,
     steps: draft.steps,
-    warnings: (draft.warnings || []).filter(
-      (warning) => !(warning.code === "no_image_yet" && (draft.images || []).some((image) => image.url))
-    ),
+    warnings,
     images: (draft.images || []).map((image) => ({
       id: String(image._id),
       url: image.url,
@@ -2448,7 +2494,7 @@ function mapDraft(draft, product) {
       error: image.error,
     })),
     providers: draft.providers,
-    imageCompleteness: summariseImageCompleteness(draft),
+    imageCompleteness: completeness,
     pendingRevision: {
       hasChanges: Boolean(draft.pendingRevision?.hasChanges),
       imagesChanged: Boolean(draft.pendingRevision?.imagesChanged),
@@ -2464,7 +2510,7 @@ function mapDraft(draft, product) {
       sourceImages: draft.provenance?.sourceImages || [],
       extractedFacts: draft.provenance?.extractedFacts || null,
     },
-    product: product ? mapProduct(product) : null,
+    product: productDto,
     createdAt: draft.createdAt,
     updatedAt: draft.updatedAt,
   };
@@ -2524,41 +2570,111 @@ const IMAGE_GENERATION_LEASE_MS = 2 * 60 * 1000;
  * that does not yet have a product. Safe to call again after a failure or an
  * interrupted request: it reads everything it needs from the stored draft.
  */
-async function completeDraftGeneration(draft) {
-  const sourceUrl = draft.sourceUrl;
-  const instruction = draft.instruction;
-  const weeklyPrice = draft.weeklyPrice;
-  const monthlyPrice = draft.monthlyPrice;
-  const userImages = (draft.images || []).filter((image) => image.origin === "user" && image.url).map((image) => image.url);
+const DRAFT_TEXT_FIELDS = [
+  "title", "titleI18n", "description", "descriptionI18n",
+  "shortDescription", "shortDescriptionI18n", "tags", "specifications", "seo", "sku",
+];
 
+// Carried over when a source that already extracted fine is reused, so its
+// warnings are not lost.
+const EXTRACTION_WARNING_PREFIXES = ["extraction_", "low_extraction", "missing_product_name"];
+
+async function populatedProduct(productId) {
+  if (!productId) return null;
+  return Product.findById(productId).populate("categoryId", "name slug").populate("brandId", "name slug image");
+}
+
+/**
+ * Appends only the image slots that are missing, never touching what is already
+ * there (ready images, failed ones awaiting a deliberate retry, pending slots).
+ * Free: no provider is called here. Returns what was planned, so the caller can
+ * explain a shortfall.
+ */
+async function rebuildMissingImages(draft) {
+  const planned = planMissingImages({
+    existing: draft.images,
+    sourceImages: draft.provenance?.sourceImages || [],
+    briefs: draft.imageBriefs,
+  });
+
+  for (const entry of planned.additions) {
+    draft.images.push({ url: "", origin: "ai", role: entry.role, prompt: entry.prompt, status: "pending" });
+  }
+  draft.steps.images.status = draft.images.some((image) => image.status === "pending")
+    ? "pending"
+    : draft.images.filter((image) => image.url).length >= MAX_DRAFT_IMAGES ? "done" : draft.steps.images.status;
+  await draft.save();
+
+  if (planned.additions.length > 0) await syncDraftImagesToProduct(draft);
+  return planned;
+}
+
+/**
+ * Runs extraction -> listing text -> product for a draft, using only what is
+ * stored on the draft. Safe to call again after a failure, an interruption, or
+ * when the owner supplies better source material.
+ *
+ * - `reextract: false` reuses the stored extraction instead of fetching again.
+ * - Without real source material (a fetched page with a product name, or details
+ *   the owner pasted) NO text is generated and nothing is spent: the draft waits
+ *   in "needs_source". A link alone is never mined for facts.
+ * - The owner's prices, photos and any category/brand they confirmed are kept.
+ */
+async function completeDraftGeneration(draft, { reextract = true } = {}) {
+  if (draft.status === "published") {
+    throw new Error("A published listing cannot be regenerated; use a pending revision.");
+  }
+
+  const instruction = draft.instruction;
   const warnings = [];
 
   // --- extraction (never fatal) -----------------------------------------
-  draft.steps.extraction.status = "running";
-  const extraction = await runExtraction(sourceUrl);
-  warnings.push(...extraction.warnings);
-  draft.steps.extraction.status = extraction.ok ? "done" : "failed";
-  draft.steps.extraction.error = extraction.error || "";
-  draft.steps.extraction.completedAt = new Date();
-  draft.provenance = {
-    extractedFacts: extraction.result.facts,
-    sourceImages: extraction.result.sourceImages,
-    retailerPrice: extraction.result.retailerPrice || { amount: 0, currency: "" },
-    extractionConfidence: extraction.result.confidence,
-    usedStrategies: extraction.result.usedStrategies,
-    finalUrl: extraction.result.finalUrl || sourceUrl,
-  };
+  if (reextract) {
+    draft.steps.extraction.status = "running";
+    const extraction = await runExtraction(draft.sourceUrl);
+    warnings.push(...extraction.warnings);
+    draft.steps.extraction.status = extraction.ok ? "done" : "failed";
+    draft.steps.extraction.error = extraction.error || "";
+    draft.steps.extraction.completedAt = new Date();
+    draft.provenance = {
+      extractedFacts: extraction.result.facts,
+      sourceImages: extraction.result.sourceImages,
+      retailerPrice: extraction.result.retailerPrice || { amount: 0, currency: "" },
+      extractionConfidence: extraction.result.confidence,
+      usedStrategies: extraction.result.usedStrategies,
+      finalUrl: extraction.result.finalUrl || draft.sourceUrl,
+    };
+  } else {
+    warnings.push(
+      ...(draft.warnings || []).filter((warning) => EXTRACTION_WARNING_PREFIXES.some((prefix) => warning.code.startsWith(prefix)))
+    );
+  }
+
+  const facts = draft.provenance?.extractedFacts || {};
+  const sourceImages = draft.provenance?.sourceImages || [];
+  const adminDetails = draft.pastedDetails || "";
+
+  // --- no real source: wait for the owner, spend nothing ------------------
+  if (!hasUsableSource({ facts, adminDetails })) {
+    draft.status = "needs_source";
+    draft.steps.text.status = "pending";
+    draft.steps.text.error = "";
+    draft.jobLeaseAt = null;
+    draft.warnings = warnings;
+    await draft.save();
+    return mapDraft(draft, await populatedProduct(draft.productId));
+  }
 
   // --- listing text -------------------------------------------------------
   const { categories, brands } = await loadCatalogueForMatching();
   draft.steps.text.status = "running";
   const text = await runTextGeneration({
-    facts: extraction.result.facts,
-    sourceUrl,
+    facts,
+    adminDetails,
     instruction,
     categories,
     brands,
-    hasUserPhotos: userImages.length > 0,
+    hasUserPhotos: (draft.images || []).some((image) => image.origin === "user" && image.url),
   });
   warnings.push(...text.warnings);
 
@@ -2575,93 +2691,73 @@ async function completeDraftGeneration(draft) {
   draft.steps.text.status = "done";
   draft.steps.text.completedAt = new Date();
   draft.providers.text = { id: text.providerId, model: text.model, real: text.providerId !== "fixture" };
+  draft.imageBriefs = text.listing.imageBriefs || [];
 
   const assembled = assembleDraft({
     listing: text.listing,
-    weeklyPrice,
-    monthlyPrice,
+    weeklyPrice: draft.weeklyPrice,
+    monthlyPrice: draft.monthlyPrice,
     categories,
     brands,
     images: draft.images.filter((image) => image.url),
     fallbackSeed: String(draft._id),
-    categoryHint: extraction.result.facts.category,
+    categoryHint: facts.category,
   });
   warnings.push(...assembled.warnings);
 
-  // --- plan images --------------------------------------------------------
-  const imagePlan = planImages({
-    userImages,
-    sourceImages: extraction.result.sourceImages,
-    briefs: text.listing.imageBriefs || [],
-  });
+  let product = draft.productId ? await Product.findById(draft.productId) : null;
 
-  draft.images = imagePlan.plan.map((entry) => ({
-    url: entry.url || "",
-    origin: entry.origin,
-    role: entry.role,
-    prompt: entry.prompt || "",
-    status: entry.status,
-  }));
-  draft.steps.images.status = imagePlan.generationNeeded ? "pending" : "skipped";
+  if (product) {
+    // Same draft, better material: replace the wording, keep the owner's prices,
+    // photos and confirmed choices.
+    for (const field of DRAFT_TEXT_FIELDS) product[field] = assembled.payload[field];
+    product.slug = await ensureUniqueSlug(assembled.slug, product._id);
+    if (!draft.taxonomyConfirmed) {
+      // Only suggestions so far, so a better source may replace them. Unmatched
+      // stays unresolved rather than being filled with an unrelated value.
+      product.categoryId = assembled.payload.categoryId || null;
+      product.brandId = assembled.payload.brandId || null;
+      product.brand = assembled.payload.brand || "";
+    }
+    await product.save();
+  }
 
-  // A product needs an image; fall back to the first source image if the admin
-  // uploaded none, otherwise the storefront placeholder is used on publish.
-  // The retailer's photo is a REFERENCE for generation, not a listing image. It
-  // only becomes one as a last resort -- when no generation was planned at all --
-  // because giving it a slot would trim the generated set below five while the
-  // completeness counter still read as full.
-  const readyImages = draft.images.filter((image) => image.url);
-  const generationPlanned = draft.images.some((image) => image.status === "pending");
-  if (readyImages.length === 0 && !generationPlanned && extraction.result.sourceImages.length > 0) {
-    draft.images.unshift({
-      url: extraction.result.sourceImages[0],
-      origin: "source",
-      role: "source-reference",
-      status: "ready",
-    });
+  // --- image slots: fill only what is missing -----------------------------
+  const planned = planMissingImages({ existing: draft.images, sourceImages, briefs: draft.imageBriefs });
+  for (const entry of planned.additions) {
+    draft.images.push({ url: "", origin: "ai", role: entry.role, prompt: entry.prompt, status: "pending" });
+  }
+  draft.steps.images.status = draft.images.some((image) => image.status === "pending") ? "pending" : "skipped";
+
+  // The retailer's photo is a REFERENCE, not a listing image. It becomes one only
+  // as a last resort -- nothing to generate and nothing else to show.
+  const hasListingImage = draft.images.some((image) => image.url);
+  if (!hasListingImage && !draft.images.some((image) => image.status === "pending") && sourceImages.length > 0) {
+    draft.images.unshift({ url: sourceImages[0], origin: "source", role: "source-reference", status: "ready" });
   }
   draft.images = draft.images.slice(0, MAX_DRAFT_IMAGES);
 
-  const slug = await ensureUniqueSlug(assembled.slug);
-  const payload = { ...assembled.payload, slug, imageUrl: draft.images.find((i) => i.url)?.url || "" };
-
-  if (!payload.imageUrl) {
-    warnings.push({ code: "no_image_yet", field: "images", message: "No image yet. Generate or upload one before publishing." });
-    payload.imageUrl = PRODUCT_IMAGE_PLACEHOLDER;
-  }
-  if (!payload.categoryId || !payload.brandId) {
-    // Product requires both; keep the draft alive and let the admin choose.
-    payload.categoryId = payload.categoryId || (categories[0] ? categories[0].id : null);
-    payload.brandId = payload.brandId || (brands[0] ? brands[0].id : null);
-    warnings.push({
-      code: "placeholder_taxonomy",
-      field: "categoryId",
-      message: "Category and/or brand were not confidently matched; a placeholder was used. Fix before publishing.",
-    });
+  if (!product) {
+    const slug = await ensureUniqueSlug(assembled.slug);
+    const payload = { ...assembled.payload, slug, imageUrl: draft.images.find((image) => image.url)?.url || "" };
+    if (!payload.imageUrl) {
+      warnings.push({ code: "no_image_yet", field: "images", message: "No image yet. Generate or upload one before publishing." });
+      payload.imageUrl = PRODUCT_IMAGE_PLACEHOLDER;
+    }
+    // Category and brand stay null when nothing matched. The owner picks or
+    // explicitly creates one; publication is blocked until then.
+    product = await Product.create(payload);
+    draft.productId = product._id;
+  } else if (draft.images.some((image) => image.url)) {
+    await syncDraftImagesToProduct(draft);
   }
 
-  if (!payload.categoryId || !payload.brandId) {
-    draft.status = "failed";
-    draft.warnings = [
-      ...warnings,
-      { code: "no_catalogue", field: "categoryId", message: "No categories or brands exist yet. Create one first." },
-    ];
-    await draft.save();
-    return { ...mapDraft(draft, null), recoverable: true };
-  }
-
-  const product = await Product.create(payload);
-  draft.productId = product._id;
   draft.status = "ready";
   draft.jobLeaseAt = null;
   draft.warnings = warnings;
   await draft.save();
 
-  const populated = await Product.findById(product._id)
-    .populate("categoryId", "name slug")
-    .populate("brandId", "name slug image");
-
-  return mapDraft(draft, populated);
+  return mapDraft(draft, await populatedProduct(draft.productId));
 }
 
 // Draft creation writes products, drafts and media. A preview deployment that
@@ -2956,7 +3052,7 @@ app.post("/api/admin/product-drafts/:id/regenerate-text", requireAdminAuth, asyn
   const { categories, brands } = await loadCatalogueForMatching();
   const text = await runTextGeneration({
     facts: draft.provenance?.extractedFacts || {},
-    sourceUrl: draft.sourceUrl,
+    adminDetails: draft.pastedDetails,
     instruction: draft.instruction,
     categories,
     brands,
@@ -3014,10 +3110,13 @@ app.post("/api/admin/product-drafts/:id/regenerate-text", requireAdminAuth, asyn
   return res.json(mapDraft(draft, populated));
 });
 
-// Resume a draft whose initial generation failed or was interrupted.
+// Continue an existing draft: finish an interrupted job, or supply better source
+// material (an alternate link, pasted details, reference photos) and carry on.
 //
-// Everything the owner typed -- URL, both prices, instruction, uploaded photos
-// -- is already stored, so resuming finishes the job rather than starting over.
+// Nothing is started over. The owner's prices, instruction and photos stay, a
+// source that already extracted fine is reused rather than fetched again, text is
+// regenerated (one paid call) only when its inputs actually changed, and image
+// slots are topped up without touching any that already exist.
 app.post("/api/admin/product-drafts/:id/resume", requireAdminAuth, async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
     return res.status(404).json({ message: "Draft not found." });
@@ -3025,8 +3124,26 @@ app.post("/api/admin/product-drafts/:id/resume", requireAdminAuth, async (req, r
   const draft = await ProductDraft.findById(req.params.id);
   if (!draft) return res.status(404).json({ message: "Draft not found." });
   if (draft.status === "discarded") return res.status(400).json({ message: "This draft was discarded." });
-  if (draft.productId) {
-    return res.json({ ...mapDraft(draft, null), alreadyComplete: true });
+  if (draft.status === "published") {
+    return res.status(409).json({
+      message: "This listing is live. Changes to a live listing go through a pending revision; use Regenerate text.",
+    });
+  }
+
+  const body = req.body || {};
+  const newUrl = typeof body.sourceUrl === "string" ? body.sourceUrl.trim() : null;
+  const newDetails = typeof body.details === "string" ? body.details.trim().slice(0, 8000) : null;
+  const newImageUrls = Array.isArray(body.imageUrls)
+    ? [...new Set(body.imageUrls.map((url) => String(url || "").trim()).filter(Boolean))]
+    : [];
+
+  const urlChanged = newUrl !== null && newUrl !== draft.sourceUrl;
+  const detailsChanged = newDetails !== null && newDetails !== draft.pastedDetails;
+  const usable = hasUsableSource({ facts: draft.provenance?.extractedFacts, adminDetails: draft.pastedDetails });
+  const textDone = draft.steps.text.status === "done" && Boolean(draft.productId);
+
+  if (draft.productId && usable && !urlChanged && !detailsChanged && newImageUrls.length === 0) {
+    return res.json({ ...mapDraft(draft, await populatedProduct(draft.productId)), alreadyComplete: true });
   }
 
   // A job still inside its lease belongs to another in-flight request.
@@ -3035,20 +3152,106 @@ app.post("/api/admin/product-drafts/:id/resume", requireAdminAuth, async (req, r
     return res.status(409).json({ message: "This draft is already being generated. Try again shortly." });
   }
 
+  // Record the new material first, so it is kept whatever happens next.
+  if (urlChanged) draft.sourceUrl = newUrl;
+  if (detailsChanged) draft.pastedDetails = newDetails;
+  if (newImageUrls.length > 0) {
+    // Make room by dropping slots that were planned but never generated; ready
+    // and failed images are left exactly as they are.
+    const known = new Set(draft.images.map((image) => image.url).filter(Boolean));
+    for (const url of newImageUrls) {
+      if (known.has(url)) continue;
+      if (draft.images.length >= MAX_DRAFT_IMAGES) {
+        const idx = draft.images.findIndex((image) => image.status === "pending" && !image.url);
+        if (idx === -1) break;
+        draft.images.splice(idx, 1);
+      }
+      draft.images.push({ url, origin: "user", role: "user-upload", status: "ready" });
+    }
+  }
+
   draft.status = "generating";
   draft.jobLeaseAt = new Date();
   await draft.save();
 
   try {
-    const completed = await completeDraftGeneration(draft);
-    return res.json(completed);
+    // Text only needs to run again if the wording's inputs changed or never ran.
+    const textInputsChanged = urlChanged || detailsChanged || !textDone || !usable;
+    if (!textInputsChanged) {
+      draft.status = "ready";
+      draft.jobLeaseAt = null;
+      await draft.save();
+      const planned = await rebuildMissingImages(draft);
+      return res.json({ ...mapDraft(draft, await populatedProduct(draft.productId)), imageNote: planned.reason || undefined });
+    }
+
+    // A previous successful extraction of the same link is reused, not refetched.
+    const reextract = urlChanged || draft.steps.extraction.status !== "done";
+    return res.json(await completeDraftGeneration(draft, { reextract }));
   } catch (error) {
+    console.error("Draft resume failed:", error.message);
     draft.status = "failed";
     draft.steps.text.status = "failed";
     draft.steps.text.error = error.message || "Generation failed.";
+    draft.jobLeaseAt = null;
     await draft.save();
     return res.status(200).json({ ...mapDraft(draft, null), recoverable: true });
   }
+});
+
+// Choose the category and/or brand for a draft from what already exists. The
+// choice is the owner's, so it is marked confirmed and a later regeneration will
+// not overwrite it.
+app.patch("/api/admin/product-drafts/:id/taxonomy", requireAdminAuth, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(404).json({ message: "Draft not found." });
+  }
+  const draft = await ProductDraft.findById(req.params.id);
+  if (!draft) return res.status(404).json({ message: "Draft not found." });
+  if (!draft.productId) return res.status(400).json({ message: "This draft has no product yet." });
+  if (draft.status === "published") {
+    return res.status(409).json({ message: "This listing is live. Change its category or brand in the full editor." });
+  }
+
+  const product = await Product.findById(draft.productId);
+  if (!product) return res.status(404).json({ message: "Draft product not found." });
+
+  const { categoryId, brandId } = req.body || {};
+  if (categoryId !== undefined) {
+    if (!mongoose.Types.ObjectId.isValid(String(categoryId)) || !(await Category.exists({ _id: categoryId }))) {
+      return res.status(400).json({ message: "That category does not exist." });
+    }
+    product.categoryId = categoryId;
+  }
+  if (brandId !== undefined) {
+    const brand = mongoose.Types.ObjectId.isValid(String(brandId)) ? await Brand.findById(brandId).select("name").lean() : null;
+    if (!brand) return res.status(400).json({ message: "That brand does not exist." });
+    product.brandId = brandId;
+    product.brand = brand.name;
+  }
+  await product.save();
+
+  draft.taxonomyConfirmed = true;
+  await draft.save();
+  return res.json(mapDraft(draft, await populatedProduct(draft.productId)));
+});
+
+// Top up missing image slots after reference photos were added. Free: it only
+// plans slots; generation happens one image at a time, as before.
+app.post("/api/admin/product-drafts/:id/rebuild-images", requireAdminAuth, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    return res.status(404).json({ message: "Draft not found." });
+  }
+  const draft = await ProductDraft.findById(req.params.id);
+  if (!draft) return res.status(404).json({ message: "Draft not found." });
+  if (draft.status === "discarded") return res.status(400).json({ message: "This draft was discarded." });
+
+  const planned = await rebuildMissingImages(draft);
+  return res.json({
+    ...mapDraft(draft, await populatedProduct(draft.productId)),
+    imageNote: planned.reason || undefined,
+    addedSlots: planned.additions.length,
+  });
 });
 
 // Apply a pending revision to the live product. Separate from publication so a

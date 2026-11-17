@@ -587,3 +587,216 @@ test("the stale 'no image yet' warning disappears once an image exists", async (
   const reread = await asAdmin(`/api/admin/product-drafts/${draft.id}`);
   assert.ok(!reread.body.warnings.some((warning) => warning.code === "no_image_yet"));
 });
+
+// ---------------------------------------------------------------------------
+// Failure recovery: needs source information, resume, taxonomy, image rebuild
+// ---------------------------------------------------------------------------
+
+const fixtureProvider = require(path.join(ROOT, "lib/ai/fixture-provider"));
+const realGenerate = fixtureProvider.fixtureTextProvider.generateListing;
+let textCalls = 0;
+fixtureProvider.fixtureTextProvider.generateListing = async (...args) => {
+  textCalls += 1;
+  return realGenerate.apply(fixtureProvider.fixtureTextProvider, args);
+};
+
+const DENIED_URL = "https://example.com/denied";
+const resume = (id, body) =>
+  asAdmin(`/api/admin/product-drafts/${id}/resume`, { method: "POST", body: JSON.stringify(body || {}) });
+
+test("a blocked source waits for the owner: status needs_source, nothing generated, nothing spent", async () => {
+  const productsBefore = await Product.countDocuments();
+  const callsBefore = textCalls;
+
+  const draft = await createDraft({ sourceUrl: DENIED_URL, weeklyPrice: 45, monthlyPrice: 120 });
+
+  assert.equal(draft.status, "needs_source", "never 'ready' without a source");
+  assert.equal(draft.needs.source, true);
+  assert.equal(draft.productId, null, "no product is invented from the link");
+  assert.equal(textCalls, callsBefore, "no provider call: a link alone is not source material");
+  assert.equal(await Product.countDocuments(), productsBefore);
+  assert.equal(draft.weeklyPrice, 45, "the owner's prices are kept");
+  assert.equal(draft.monthlyPrice, 120);
+  assert.ok(draft.warnings.some((w) => w.code === "extraction_access_denied"));
+  assert.ok(draft.warnings.some((w) => w.code === "needs_source_information"));
+});
+
+test("pasted details turn a needs_source draft into a real draft, keeping prices and inputs", async () => {
+  const draft = await createDraft({ sourceUrl: DENIED_URL, weeklyPrice: 45, monthlyPrice: 120, instruction: "Black." });
+  const callsBefore = textCalls;
+
+  const resumed = await resume(draft.id, { details: "Gigabyte Gaming A16\nAMD Ryzen 7 260, 16 GB RAM, 1 TB SSD, RTX 5060" });
+
+  assert.equal(resumed.status, 200, JSON.stringify(resumed.body).slice(0, 200));
+  assert.equal(resumed.body.status, "ready");
+  assert.ok(resumed.body.productId);
+  assert.equal(resumed.body.weeklyPrice, 45);
+  assert.equal(resumed.body.monthlyPrice, 120);
+  assert.equal(resumed.body.instruction, "Black.");
+  assert.equal(textCalls, callsBefore + 1, "exactly one text generation");
+  assert.equal(resumed.body.product.buyerPrice, 45);
+  assert.equal(resumed.body.product.monthlyBuyerPrice, 120);
+});
+
+test("an unmatched category and brand stay unresolved, never replaced with the first ones", async () => {
+  const draft = await createDraft({ sourceUrl: DENIED_URL });
+  const resumed = await resume(draft.id, { details: "Gigabyte Gaming A16 laptop, 16 inch, 16 GB RAM" });
+
+  const product = await Product.findById(resumed.body.productId);
+  assert.equal(product.categoryId, null, "no 'Cameras' substitution");
+  assert.equal(product.brandId, null, "no 'Sony' substitution");
+  assert.equal(resumed.body.taxonomy.categoryResolved, false);
+  assert.equal(resumed.body.taxonomy.brandResolved, false);
+  assert.equal(resumed.body.needs.taxonomy, true);
+  assert.ok(resumed.body.warnings.some((w) => w.code === "category_unresolved"));
+  assert.ok(!resumed.body.warnings.some((w) => w.code === "placeholder_taxonomy"));
+});
+
+test("publication is blocked until category and brand are chosen, then allowed", async () => {
+  const draft = await createDraft({ sourceUrl: DENIED_URL });
+  const resumed = await resume(draft.id, { details: "Gigabyte Gaming A16 laptop" });
+  await makePublishable(draft.id);
+  const product = await Product.findById(resumed.body.productId);
+  product.buyerPrice = 45; product.monthlyBuyerPrice = 120; await product.save();
+
+  const blocked = await asAdmin(`/api/admin/product-drafts/${draft.id}/publish`, { method: "POST", body: JSON.stringify({ confirm: true }) });
+  assert.equal(blocked.status, 400);
+  assert.ok(blocked.body.blockers.some((b) => /category/i.test(b)));
+  assert.ok(blocked.body.blockers.some((b) => /brand/i.test(b)));
+
+  const viaEditor = await asAdmin(`/api/admin/products/${product._id}`, {
+    method: "PUT",
+    body: JSON.stringify({ title: product.title, slug: product.slug, imageUrl: "https://cdn.test/own-photo.jpg", categoryId, brandId, monthlyPrice: 120, buyerPrice: 45, monthlyBuyerPrice: 120, isActive: true }),
+  });
+  assert.equal(viaEditor.status, 200, "the editor assigned both, so its own check passes");
+
+  // Choose through the draft route instead, and publish.
+  const picked = await asAdmin(`/api/admin/product-drafts/${draft.id}/taxonomy`, { method: "PATCH", body: JSON.stringify({ categoryId, brandId }) });
+  assert.equal(picked.status, 200);
+  assert.equal(picked.body.taxonomy.confirmed, true);
+  assert.equal(picked.body.needs.taxonomy, false);
+});
+
+test("a taxonomy choice must be an existing category and brand", async () => {
+  const draft = await createDraft({ sourceUrl: DENIED_URL });
+  await resume(draft.id, { details: "Some product" });
+  const missing = "cccccccccccccccccccccccc";
+
+  assert.equal((await asAdmin(`/api/admin/product-drafts/${draft.id}/taxonomy`, { method: "PATCH", body: JSON.stringify({ categoryId: missing }) })).status, 400);
+  assert.equal((await asAdmin(`/api/admin/product-drafts/${draft.id}/taxonomy`, { method: "PATCH", body: JSON.stringify({ brandId: missing }) })).status, 400);
+  assert.equal((await asAdmin(`/api/admin/product-drafts/${draft.id}/taxonomy`, { method: "PATCH", body: JSON.stringify({ categoryId: "not-an-id" }) })).status, 400);
+});
+
+test("a confirmed choice is not overwritten by a later regeneration", async () => {
+  const draft = await createDraft({ sourceUrl: DENIED_URL });
+  await resume(draft.id, { details: "First details" });
+  await asAdmin(`/api/admin/product-drafts/${draft.id}/taxonomy`, { method: "PATCH", body: JSON.stringify({ categoryId, brandId }) });
+
+  const again = await resume(draft.id, { details: "Better details with a spec sheet" });
+  assert.equal(again.status, 200);
+  assert.equal(String(again.body.product.categoryId), categoryId, "the owner's choice survives");
+  assert.equal(String(again.body.product.brandId), brandId);
+});
+
+test("an alternate link on the same draft finishes it, reusing prices and the draft id", async () => {
+  const draft = await createDraft({ sourceUrl: DENIED_URL, weeklyPrice: 15, monthlyPrice: 40 });
+  assert.equal(draft.status, "needs_source");
+
+  const resumed = await resume(draft.id, { sourceUrl: "https://example.com/a7m4" });
+
+  assert.equal(resumed.body.id, draft.id, "same draft, not a new one");
+  assert.equal(resumed.body.status, "ready");
+  assert.equal(resumed.body.sourceUrl, "https://example.com/a7m4");
+  assert.equal(resumed.body.weeklyPrice, 15);
+  assert.equal(resumed.body.product.buyerPrice, 15);
+  assert.equal(String(resumed.body.product.categoryId), categoryId, "matched from the new source");
+});
+
+test("an older draft saved 'ready' from a blocked link reads as needs_source and cannot publish", async () => {
+  const legacy = await ProductDraft.create({
+    createdByAdminId: new mongoose.Types.ObjectId(),
+    sourceUrl: DENIED_URL, weeklyPrice: 45, monthlyPrice: 120, status: "ready",
+    steps: { extraction: { status: "failed", error: "ACCESS_DENIED" }, text: { status: "done" }, images: { status: "skipped" } },
+    providers: { text: { id: "gemini", model: "m", real: true }, image: { id: "gemini", model: "m", real: true } },
+    warnings: [{ code: "placeholder_taxonomy", field: "categoryId", message: "placeholder" }],
+    images: [{ url: "https://cdn.test/mine.jpg", origin: "user", role: "user-upload", status: "ready" }],
+  });
+  const product = await Product.create({
+    title: "Guessed from the URL", slug: `legacy-${Date.now()}`, imageUrl: "https://cdn.test/mine.jpg",
+    categoryId, brandId, monthlyPrice: 120, buyerPrice: 45, monthlyBuyerPrice: 120, isActive: false,
+  });
+  legacy.productId = product._id; await legacy.save();
+
+  const shown = await asAdmin(`/api/admin/product-drafts/${legacy._id}`);
+  assert.equal(shown.body.status, "needs_source", "not 'ready'");
+  assert.ok(!shown.body.warnings.some((w) => w.code === "placeholder_taxonomy"));
+
+  const publish = await asAdmin(`/api/admin/product-drafts/${legacy._id}/publish`, { method: "POST", body: JSON.stringify({ confirm: true }) });
+  assert.equal(publish.status, 400);
+  assert.ok(publish.body.blockers.some((b) => /verified source/i.test(b)));
+
+  const fixed = await resume(String(legacy._id), { details: "Real details from the spec sheet" });
+  assert.equal(fixed.body.status, "ready");
+  const reread = await Product.findById(product._id);
+  assert.equal(reread.buyerPrice, 45, "prices untouched");
+  assert.equal(reread.categoryId, null, "the unconfirmed placeholder is cleared, not kept");
+  assert.notEqual(reread.title, "Guessed from the URL");
+});
+
+test("reference photos fill missing image slots without a text call and without touching existing images", async () => {
+  const draft = await createDraft({ sourceUrl: DENIED_URL });
+  const first = await resume(draft.id, { details: "A product described by the owner" });
+  // No photo and no source image: only views that need no reference can be planned.
+  assert.ok(first.body.imageCompleteness.missing > 0);
+  assert.equal(first.body.imageCompleteness.complete, false);
+  const callsBefore = textCalls;
+
+  const withPhoto = await resume(draft.id, { imageUrls: ["https://cdn.test/reference-1.jpg"] });
+
+  assert.equal(textCalls, callsBefore, "adding a photo must not trigger paid text generation");
+  const imgs = withPhoto.body.images;
+  assert.ok(imgs.some((i) => i.url === "https://cdn.test/reference-1.jpg" && i.origin === "user"));
+  assert.equal(imgs.length, 5, "the missing slots were rebuilt up to five");
+  assert.equal(imgs.filter((i) => i.status === "pending").length, 4);
+
+  const again = await asAdmin(`/api/admin/product-drafts/${draft.id}/rebuild-images`, { method: "POST", body: "{}" });
+  assert.equal(again.body.addedSlots, 0, "rebuilding is idempotent");
+  assert.equal(again.body.images.length, 5);
+});
+
+test("rebuilding keeps ready and failed images and only adds what is absent", async () => {
+  const draft = await createDraft();               // five pending slots from the JSON-LD page
+  const record = await ProductDraft.findById(draft.id);
+  record.images[0].url = "https://cdn.test/done.jpg"; record.images[0].status = "ready"; record.images[0].origin = "ai";
+  record.images[1].status = "failed"; record.images[1].error = "provider error";
+  record.images.splice(3);                          // drop two slots to simulate a shortfall
+  await record.save();
+
+  const result = await asAdmin(`/api/admin/product-drafts/${draft.id}/rebuild-images`, { method: "POST", body: "{}" });
+  const imgs = result.body.images;
+  assert.equal(imgs.length, 5);
+  assert.equal(imgs[0].url, "https://cdn.test/done.jpg", "the successful image is preserved");
+  assert.equal(imgs[1].status, "failed", "a failure stays visible; retrying is the owner's call");
+  assert.equal(result.body.addedSlots, 2);
+});
+
+test("a live listing cannot be re-sourced from the draft screen", async () => {
+  const draft = await createDraft();
+  await makePublishable(draft.id);
+  await asAdmin(`/api/admin/product-drafts/${draft.id}/publish`, { method: "POST", body: JSON.stringify({ confirm: true }) });
+  const response = await resume(draft.id, { details: "New details" });
+  assert.equal(response.status, 409, "changes to a live listing go through a pending revision");
+});
+
+test("category and brand are required for an active product, but not for a private draft", async () => {
+  const active = new Product({ title: "x", slug: "req-active", imageUrl: "u", monthlyPrice: 1, isActive: true });
+  await assert.rejects(() => active.validate(), /categoryId|brandId/);
+
+  const draftProduct = new Product({ title: "x", slug: "req-draft", imageUrl: "u", monthlyPrice: 1, isActive: false });
+  await assert.doesNotReject(() => draftProduct.validate());
+
+  const viaRoute = await asAdmin("/api/admin/products", {
+    method: "POST", body: JSON.stringify({ title: "No taxonomy", slug: "no-taxonomy", imageUrl: "u", monthlyPrice: 5, isActive: true }),
+  });
+  assert.equal(viaRoute.status, 400, "the manual/CSV create route still demands both");
+});

@@ -68,12 +68,12 @@ async function runExtraction(sourceUrl, deps = {}) {
   }
 }
 
-async function runTextGeneration({ facts, sourceUrl, instruction, categories, brands, hasUserPhotos }, deps = {}) {
+async function runTextGeneration({ facts, adminDetails, instruction, categories, brands, hasUserPhotos }, deps = {}) {
   const provider = deps.textProvider || resolveTextProvider();
   try {
     const { listing, providerId, model } = await provider.generateListing({
       facts,
-      sourceUrl,
+      adminDetails,
       adminInstruction: instruction,
       categories,
       brands,
@@ -89,6 +89,60 @@ async function runTextGeneration({ facts, sourceUrl, instruction, categories, br
       warnings: [{ code: "text_generation_failed", field: "*", message: error.message || "Listing text could not be generated." }],
     };
   }
+}
+
+/**
+ * A listing may only be written from real source material: a fetched product
+ * page that yielded a product name, or details the owner supplied. A link on
+ * its own is not source material -- its text must never be mined for facts.
+ */
+function hasUsableSource({ facts, adminDetails }) {
+  return Boolean(String(facts?.name || "").trim()) || Boolean(String(adminDetails || "").trim());
+}
+
+const DEFAULT_IMAGE_BRIEFS = [
+  { role: "hero", prompt: "Clean primary product shot on a neutral background", requiresReference: false },
+  { role: "angle", prompt: "A second, different supported angle of the same product", requiresReference: true },
+  { role: "detail", prompt: "Close-up of a clearly visible feature or control", requiresReference: true },
+  { role: "context", prompt: "The product in realistic everyday use", requiresReference: true },
+  { role: "alt", prompt: "Another distinct, useful view of the product", requiresReference: true },
+];
+
+/**
+ * Plans only the image slots that are missing, leaving everything already in the
+ * draft untouched -- ready images, failed ones awaiting a deliberate retry, and
+ * pending slots alike. Used both for a first plan and for a rebuild after the
+ * owner supplies reference material.
+ */
+function planMissingImages({ existing, sourceImages, briefs }) {
+  const current = existing || [];
+  const missing = Math.max(0, MAX_IMAGES - current.length);
+  const hasReference = current.some((image) => image.origin === "user" && image.url) || (sourceImages || []).length > 0;
+
+  if (missing === 0) return { additions: [], hasReference, reason: "" };
+
+  const takenRoles = new Set(current.map((image) => image.role));
+  const pool = (briefs && briefs.length ? briefs : DEFAULT_IMAGE_BRIEFS)
+    .filter((brief) => !takenRoles.has(brief.role))
+    .filter((brief) => !brief.requiresReference || hasReference)
+    .slice(0, missing);
+
+  const additions = pool.map((brief) => ({
+    origin: "ai",
+    url: "",
+    role: brief.role || "image",
+    prompt: brief.prompt || "",
+    status: "pending",
+    requiresReference: Boolean(brief.requiresReference),
+  }));
+
+  let reason = "";
+  if (additions.length === 0 && !hasReference) {
+    reason = "No reference photo is available. Add a photo of the product so the missing views can be created safely.";
+  } else if (additions.length < missing && !hasReference) {
+    reason = "Some views need a reference photo. Add one to create the rest.";
+  }
+  return { additions, hasReference, reason };
 }
 
 /**
@@ -191,9 +245,12 @@ function assembleDraft({ listing, weeklyPrice, monthlyPrice, categories, brands,
 module.exports = {
   assembleDraft,
   describeProviders,
+  DEFAULT_IMAGE_BRIEFS,
   generateOneImage,
+  hasUsableSource,
   MAX_IMAGES,
   planImages,
+  planMissingImages,
   runExtraction,
   runTextGeneration,
 };

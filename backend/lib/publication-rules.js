@@ -7,6 +7,8 @@
 // listing cannot be activated through the older path to skip these checks.
 // Products with no draft (manual, CSV) are unaffected.
 
+const { hasUsableSource } = require("./ai/draft-service");
+
 const IMAGE_TARGET = 5;
 
 function isPlaceholderImage(url, placeholder) {
@@ -33,6 +35,15 @@ function evaluatePublicationBlockers({ product, draft, placeholderImage, confirm
 
   if (draft) {
     const images = draft.images || [];
+
+    // A listing must rest on real source material: a fetched page that gave a
+    // product name, or details the owner supplied. Text written from a link
+    // alone is a guess and is never publishable.
+    if (!hasUsableSource({ facts: draft.provenance?.extractedFacts, adminDetails: draft.pastedDetails })) {
+      blockers.push(
+        "This listing has no verified source information. Add a working source link or paste the product details, then continue."
+      );
+    }
 
     // Nothing produced by the development fixture providers may go live.
     if (images.some((image) => image.isFixture && image.url)) {

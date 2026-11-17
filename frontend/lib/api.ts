@@ -1463,9 +1463,35 @@ export async function publishProductDraft(
   );
 }
 
-/** Finishes a draft whose initial generation failed or was interrupted. */
-export async function resumeProductDraft(adminToken: string, draftId: string) {
+/** Continues a draft. With no body it finishes an interrupted job; with an
+ *  alternate link, pasted details and/or reference photos it carries on from
+ *  better source material. Prices and existing photos are kept. */
+export async function resumeProductDraft(
+  adminToken: string,
+  draftId: string,
+  input: { sourceUrl?: string; details?: string; imageUrls?: string[] } = {}
+) {
   return adminJson<ProductDraft>(`/api/admin/product-drafts/${encodeURIComponent(draftId)}/resume`, adminToken, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Records the owner's category/brand choice (existing ones only). */
+export async function updateDraftTaxonomy(
+  adminToken: string,
+  draftId: string,
+  input: { categoryId?: string; brandId?: string }
+) {
+  return adminJson<ProductDraft>(`/api/admin/product-drafts/${encodeURIComponent(draftId)}/taxonomy`, adminToken, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Tops up missing image slots (free; generation is still one image at a time). */
+export async function rebuildDraftImages(adminToken: string, draftId: string) {
+  return adminJson<ProductDraft>(`/api/admin/product-drafts/${encodeURIComponent(draftId)}/rebuild-images`, adminToken, {
     method: "POST",
     body: "{}",
   });

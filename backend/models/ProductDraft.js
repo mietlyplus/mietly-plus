@@ -54,10 +54,19 @@ const productDraftSchema = new mongoose.Schema(
     weeklyPrice: { type: Number, default: 0, min: 0 },
     monthlyPrice: { type: Number, default: 0, min: 0 },
     instruction: { type: String, default: "", trim: true, maxlength: 2000 },
+    // Details the owner typed or pasted (e.g. from a spec sheet). Treated as a
+    // factual source alongside, or instead of, a fetched page.
+    pastedDetails: { type: String, default: "", trim: true, maxlength: 8000 },
+    // True once the owner has picked the category/brand. Until then they are
+    // only suggestions and a later regeneration may replace them.
+    taxonomyConfirmed: { type: Boolean, default: false },
+    // The image briefs from the last text generation, kept so missing slots can
+    // be rebuilt later without another paid text call.
+    imageBriefs: { type: mongoose.Schema.Types.Mixed, default: [] },
 
     status: {
       type: String,
-      enum: ["generating", "ready", "failed", "published", "discarded"],
+      enum: ["generating", "needs_source", "ready", "failed", "published", "discarded"],
       default: "generating",
       index: true,
     },
