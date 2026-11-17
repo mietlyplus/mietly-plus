@@ -1,0 +1,56 @@
+backend/index.js
+  s_755b8269fb6f42::t_e7917abc8a0903 3113-3114,3116-3119,3127-3146,3155-3172,3178-3190,3192,3196,3202-3255
+  s_755b8269fb6f42::t_5f239121ac2fa2 2428-2430,2432-2464,2472-2482,2484,2497,2513,3055
+  s_755b8269fb6f42::t_f4378e98a7c6c3 938
+  s_755b8269fb6f42::t_c3e95796da0cbc 2421,2423,2573-2626,2628,2632-2666,2672-2673,2677,2694,2698-2699,2704,2708-2723,2725-2728,2730,2732-2736,2738,2740-2752,2760
+  s_755b8269fb6f42::t_40375be753b8eb 3256
+frontend/app/admin/products/list/page.tsx
+  s_755b8269fb6f42::t_e7f5830fbcdb0a 88
+  s_755b8269fb6f42::t_400e634c06ff46 8-18
+frontend/components/admin/draft-source-panel.tsx
+  s_755b8269fb6f42::t_eb365ff458fbf6 1-76,78-124
+  s_755b8269fb6f42::t_a29a42d568dd96 77
+frontend/lib/types.ts
+  s_755b8269fb6f42::t_e7f5830fbcdb0a 295-299,341-342
+backend/models/ProductDraft.js
+  s_755b8269fb6f42::t_ced411bc2102fd 57-65,69
+backend/lib/ai/draft-recovery.test.js
+  s_755b8269fb6f42::t_f704a62d96048b 1-82
+backend/lib/ai/prompts.js
+  s_755b8269fb6f42::t_1df392a18b0c21 15-20,36,56-58
+backend/lib/ai/draft-service.js
+  s_755b8269fb6f42::t_1df392a18b0c21 71,76,94-147,248,250,253
+frontend/lib/api.ts
+  s_755b8269fb6f42::t_e7f5830fbcdb0a 1466-1473,1475-1494
+backend/models/Product.js
+  s_755b8269fb6f42::t_f4378e98a7c6c3 3-9,69,78
+backend/lib/publication-rules.js
+  s_755b8269fb6f42::t_ced411bc2102fd 10-11,39-46
+  s_755b8269fb6f42::t_7cb1fcc8873f80 47
+frontend/app/admin/products/draft/[id]/page.tsx
+  s_755b8269fb6f42::t_89286544ad2cbb 18-19,43-45,70-72,75-77,79,82-84,87,92,106,200,209,269-276,460
+backend/lib/source/fetch-source.js
+  s_755b8269fb6f42::t_f4378e98a7c6c3 25-33,227-232,327
+backend/lib/ai/fixture-provider.js
+  s_755b8269fb6f42::t_1df392a18b0c21 29-30
+frontend/components/admin/draft-taxonomy-panel.tsx
+  s_755b8269fb6f42::t_89286544ad2cbb 1-155
+backend/integration/product-automation.test.js
+  s_755b8269fb6f42::t_f2732ca5c70cde 590-802
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "813148a3909adcbf3b39947fc68378adaa77d389",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
