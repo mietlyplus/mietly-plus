@@ -74,11 +74,32 @@ function getDatabaseIsolation(env = process.env) {
   return { isolated: true, preview: true, dbName: target.dbName, reason: "" };
 }
 
+// Secrets that a preview deployment may replace with a `<NAME>_PREVIEW` value, so
+// tokens minted on a preview are not valid against production and vice versa.
+// Applied once at startup, before any module reads the variable.
+const PREVIEW_OVERRIDABLE_SECRETS = ["JWT_SECRET"];
+
+function applyPreviewOverrides(env = process.env) {
+  if (!isPreviewDeployment(env)) return [];
+
+  const applied = [];
+  for (const name of PREVIEW_OVERRIDABLE_SECRETS) {
+    const override = String(env[`${name}_PREVIEW`] || "").trim();
+    if (override) {
+      env[name] = override;
+      applied.push(name);
+    }
+  }
+  return applied;
+}
+
 function productUploadFolder(env = process.env) {
   return readEnv("CLOUDINARY_PRODUCT_FOLDER", env) || DEFAULT_PRODUCT_UPLOAD_FOLDER;
 }
 
 module.exports = {
+  applyPreviewOverrides,
+  PREVIEW_OVERRIDABLE_SECRETS,
   DEFAULT_PREVIEW_DB_NAME,
   DEFAULT_PRODUCT_UPLOAD_FOLDER,
   PRODUCTION_DB_NAME,

@@ -73,3 +73,29 @@ test("readEnv only consults the preview variant on a preview deployment", () => 
   assert.equal(readEnv("X", { VERCEL_ENV: "preview", X: "shared", X_PREVIEW: "pv" }), "pv");
   assert.equal(readEnv("X", { VERCEL_ENV: "preview", X: "shared" }), "shared");
 });
+
+const { applyPreviewOverrides } = require("./runtime-env");
+
+test("a preview swaps in its own JWT secret", () => {
+  const env = { VERCEL_ENV: "preview", JWT_SECRET: "shared", JWT_SECRET_PREVIEW: "preview-only" };
+  assert.deepEqual(applyPreviewOverrides(env), ["JWT_SECRET"]);
+  assert.equal(env.JWT_SECRET, "preview-only");
+});
+
+test("production and local runs never adopt a preview secret", () => {
+  for (const vercelEnv of ["production", undefined]) {
+    const env = { VERCEL_ENV: vercelEnv, JWT_SECRET: "shared", JWT_SECRET_PREVIEW: "preview-only" };
+    assert.deepEqual(applyPreviewOverrides(env), []);
+    assert.equal(env.JWT_SECRET, "shared", `VERCEL_ENV=${vercelEnv}`);
+  }
+});
+
+test("a preview with no override keeps the shared secret, and a blank override is ignored", () => {
+  const none = { VERCEL_ENV: "preview", JWT_SECRET: "shared" };
+  assert.deepEqual(applyPreviewOverrides(none), []);
+  assert.equal(none.JWT_SECRET, "shared");
+
+  const blank = { VERCEL_ENV: "preview", JWT_SECRET: "shared", JWT_SECRET_PREVIEW: "   " };
+  assert.deepEqual(applyPreviewOverrides(blank), []);
+  assert.equal(blank.JWT_SECRET, "shared");
+});
