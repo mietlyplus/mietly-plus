@@ -45,4 +45,13 @@ function previewMediaPublicId(url, folder) {
   return rest;
 }
 
-module.exports = { previewMediaPublicId };
+/**
+ * Whether discarding a draft should also delete its images. Only on a preview,
+ * only when storage is configured, and never while the product is still live:
+ * a published listing's images belong to the listing, not to the draft.
+ */
+function shouldPurgePreviewMedia({ isPreview, hasCloudinary, productStillLive }) {
+  return Boolean(isPreview) && Boolean(hasCloudinary) && !productStillLive;
+}
+
+module.exports = { previewMediaPublicId, shouldPurgePreviewMedia };

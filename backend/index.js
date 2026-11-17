@@ -11,7 +11,7 @@ const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 const { connectDatabase } = require("./db");
 const { getDatabaseIsolation, isPreviewDeployment, productUploadFolder } = require("./lib/runtime-env");
-const { previewMediaPublicId } = require("./lib/preview-media");
+const { previewMediaPublicId, shouldPurgePreviewMedia } = require("./lib/preview-media");
 const User = require("./models/User");
 const SignupOtp = require("./models/SignupOtp");
 const Admin = require("./models/Admin");
@@ -3193,11 +3193,14 @@ app.delete("/api/admin/product-drafts/:id", requireAdminAuth, async (req, res) =
   const draft = await ProductDraft.findById(req.params.id);
   if (!draft) return res.status(404).json({ message: "Draft not found." });
 
+  let productStillLive = false;
   if (draft.productId) {
     const product = await Product.findById(draft.productId).select("_id isActive").lean();
     // Never delete something already live through the draft route.
     if (product && product.isActive !== true) {
       await Product.deleteOne({ _id: draft.productId });
+    } else if (product) {
+      productStillLive = true;
     }
   }
 
@@ -3205,7 +3208,7 @@ app.delete("/api/admin/product-drafts/:id", requireAdminAuth, async (req, res) =
   // preview Cloudinary folder. previewMediaPublicId refuses anything outside
   // that folder, so an existing asset can never be deleted this way.
   let purgedMedia = 0;
-  if (isPreviewDeployment() && hasCloudinaryConfig) {
+  if (shouldPurgePreviewMedia({ isPreview: isPreviewDeployment(), hasCloudinary: hasCloudinaryConfig, productStillLive })) {
     const folder = productUploadFolder();
     for (const image of draft.images || []) {
       const publicId = previewMediaPublicId(image.url, folder);
