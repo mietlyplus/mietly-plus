@@ -11,6 +11,7 @@ const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 const { connectDatabase } = require("./db");
 const { getDatabaseIsolation, isPreviewDeployment, productUploadFolder } = require("./lib/runtime-env");
+const { previewMediaPublicId } = require("./lib/preview-media");
 const User = require("./models/User");
 const SignupOtp = require("./models/SignupOtp");
 const Admin = require("./models/Admin");
@@ -3194,9 +3195,27 @@ app.delete("/api/admin/product-drafts/:id", requireAdminAuth, async (req, res) =
     }
   }
 
+  // On a preview only, also remove this draft's images from the dedicated
+  // preview Cloudinary folder. previewMediaPublicId refuses anything outside
+  // that folder, so an existing asset can never be deleted this way.
+  let purgedMedia = 0;
+  if (isPreviewDeployment() && hasCloudinaryConfig) {
+    const folder = productUploadFolder();
+    for (const image of draft.images || []) {
+      const publicId = previewMediaPublicId(image.url, folder);
+      if (!publicId) continue;
+      try {
+        await cloudinary.uploader.destroy(publicId, { resource_type: "image" });
+        purgedMedia += 1;
+      } catch (error) {
+        console.error("Preview media cleanup failed:", error.message);
+      }
+    }
+  }
+
   draft.status = "discarded";
   await draft.save();
-  return res.json({ message: "Draft discarded." });
+  return res.json({ message: "Draft discarded.", purgedMedia });
 });
 
 app.post("/api/auth/check-email", async (req, res) => {
