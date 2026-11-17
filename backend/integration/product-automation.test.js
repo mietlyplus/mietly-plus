@@ -41,6 +41,9 @@ fetchSource.fetchSourceDocument = async (url) => {
 const app = require(path.join(ROOT, "index.js"));
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const Admin = require(path.join(ROOT, "models/Admin"));
+let adminId;
 const Product = require(path.join(ROOT, "models/Product"));
 const Category = require(path.join(ROOT, "models/Category"));
 const Brand = require(path.join(ROOT, "models/Brand"));
@@ -116,10 +119,27 @@ test.before(async () => {
   categoryId = String(category._id);
   brandId = String(brand._id);
 
-  adminToken = jwt.sign(
-    { sub: String(new mongoose.Types.ObjectId()), email: "admin@test", role: "admin", name: "IT" },
-    process.env.JWT_SECRET
-  );
+  const adminDoc = await Admin.create({ name: "IT", username: "it-admin", usernameKey: "it-admin", email: "admin@test.example", passwordHash: await bcrypt.hash("integration-password-1", 4) });
+  adminId = String(adminDoc._id);
+  adminToken = jwt.sign({ sub: adminId, email: "admin@test.example", role: "admin", name: "IT" }, process.env.JWT_SECRET);
+});
+
+test("admin sign-in by username works, fails closed, and a removed admin's token stops working", async () => {
+  const post = (body) => fetch(`${base}/api/admin/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const ok = await post({ identifier: "IT-Admin", password: "integration-password-1" });
+  assert.equal(ok.status, 200);
+  const { token } = await ok.json();
+  assert.equal((await fetch(`${base}/api/admin/auth/me`, { headers: { Authorization: `Bearer ${token}` } })).status, 200);
+  assert.equal((await post({ identifier: "it-admin", password: "wrong-password-1" })).status, 401);
+  assert.equal((await post({ identifier: "nobody", password: "whatever-password" })).status, 401);
+  const throwaway = await Admin.create({ name: "T", email: "gone@test.example", passwordHash: await bcrypt.hash("integration-password-2", 4) });
+  const goneToken = jwt.sign({ sub: String(throwaway._id), email: "gone@test.example", role: "admin", name: "T" }, process.env.JWT_SECRET);
+  const meUrl = `${base}/api/admin/auth/me`;
+  assert.equal((await fetch(meUrl, { headers: { Authorization: `Bearer ${goneToken}` } })).status, 200);
+  await Admin.deleteOne({ _id: throwaway._id });
+  assert.equal((await fetch(meUrl, { headers: { Authorization: `Bearer ${goneToken}` } })).status, 401);
+  for (let i = 0; i < 5; i += 1) await post({ identifier: "locked-user", password: "wrong-password-1" });
+  assert.equal((await post({ identifier: "locked-user", password: "wrong-password-1" })).status, 429);
 });
 
 test.after(async () => {
@@ -507,7 +527,7 @@ test("a second generate request for the same image is refused while one is in fl
 test("the five-image cap is enforced", async () => {
   const draft = await createDraft();
   const record = await ProductDraft.findById(draft.id);
-  while (record.images.length < 5) record.images.push({ url: "https://cdn.test/x.jpg", origin: "user", status: "ready" });
+  record.images = Array.from({ length: 5 }, () => ({ url: "https://cdn.test/x.jpg", origin: "user", status: "ready" }));
   await record.save();
 
   const overflow = await asAdmin(`/api/admin/product-drafts/${draft.id}/images`, {

@@ -606,7 +606,7 @@ export async function deleteUserAccount(token: string, payload: { password: stri
   return response.json() as Promise<{ message: string }>;
 }
 
-export async function adminLogin(payload: { email: string; password: string }) {
+export async function adminLogin(payload: { identifier: string; password: string }) {
   const response = await fetch(`${API_BASE_URL}/api/admin/auth/login`, {
     method: "POST",
     headers: {

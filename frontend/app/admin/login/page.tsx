@@ -17,7 +17,7 @@ export default function AdminLoginPage() {
     setLoading(true);
     setError("");
     try {
-      const payload = await adminLogin({ email: email.trim(), password: password.trim() });
+      const payload = await adminLogin({ identifier: email.trim(), password: password.trim() });
       localStorage.setItem("admin_token", payload.token);
       router.replace("/admin");
     } catch (err) {
@@ -39,15 +39,15 @@ export default function AdminLoginPage() {
           <input type="text" name="fake_username" autoComplete="username" className="hidden" tabIndex={-1} />
           <input type="password" name="fake_password" autoComplete="current-password" className="hidden" tabIndex={-1} />
           <label className="block">
-            <span className="mb-1 block text-sm font-semibold text-zinc-700">Admin Email</span>
+            <span className="mb-1 block text-sm font-semibold text-zinc-700">Username or email</span>
             <input
-              type="email"
+              type="text"
               name="admin_login_email"
               autoComplete="off"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full rounded-xl border border-zinc-300 px-3 py-2.5 text-zinc-900 outline-none transition focus:border-[rgb(73,153,173)] focus:ring-2 focus:ring-[rgba(73,153,173,0.2)]"
-              placeholder="Enter admin email"
+              placeholder="Username or email"
               required
             />
           </label>

@@ -7,6 +7,10 @@ const adminSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    username: { type: String, trim: true },
+    // Lower-cased copy used for sign-in lookups; sparse so existing admins
+    // without a username are unaffected.
+    usernameKey: { type: String, lowercase: true, trim: true, unique: true, sparse: true },
     email: {
       type: String,
       required: true,

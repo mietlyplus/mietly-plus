@@ -56,7 +56,9 @@ test.before(async () => {
   await Category.create({ name: { en: "Cameras", de: "Kameras" }, slug: "cameras" });
   await Brand.create({ name: "Sony", slug: "sony", isActive: true });
 
-  adminToken = jwt.sign({ sub: String(new mongoose.Types.ObjectId()), email: "a@t", role: "admin", name: "IT" }, process.env.JWT_SECRET);
+  const Admin = require(path.join(ROOT, "models/Admin"));
+  const adminDoc = await Admin.create({ name: "IT", email: "a@t.example", passwordHash: "x" });
+  adminToken = jwt.sign({ sub: String(adminDoc._id), email: "a@t.example", role: "admin", name: "IT" }, process.env.JWT_SECRET);
   server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, resolve));
   base = `http://127.0.0.1:${server.address().port}`;

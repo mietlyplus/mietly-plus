@@ -27,6 +27,11 @@ const ProductDraft = require("./models/ProductDraft");
 const app = express();
 const PORT = process.env.PORT || 5000;
 const upload = multer({ storage: multer.memoryStorage() });
+const IS_PRODUCTION_RUNTIME = process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
+if (IS_PRODUCTION_RUNTIME && !String(process.env.JWT_SECRET || "").trim()) {
+  // A built-in fallback secret would let anyone forge admin tokens.
+  throw new Error("JWT_SECRET must be set in production.");
+}
 const JWT_SECRET = process.env.JWT_SECRET || "super_secret_change_me";
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
@@ -131,23 +136,32 @@ function buildUserToken(user) {
   );
 }
 
-function requireAdminAuth(req, res, next) {
+async function requireAdminAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
   if (!authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ message: "Unauthorized." });
   }
 
   const token = authHeader.replace("Bearer ", "");
+  let payload;
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    if (payload.role !== "admin") {
-      return res.status(403).json({ message: "Forbidden." });
-    }
-    req.admin = payload;
-    return next();
+    payload = jwt.verify(token, JWT_SECRET);
   } catch {
     return res.status(401).json({ message: "Invalid token." });
   }
+  if (payload.role !== "admin") {
+    return res.status(403).json({ message: "Forbidden." });
+  }
+  // A token only counts while its admin account still exists, so removing an
+  // account revokes its sessions immediately instead of after seven days.
+  try {
+    const stillExists = await Admin.exists({ _id: payload.sub });
+    if (!stillExists) return res.status(401).json({ message: "Invalid token." });
+  } catch {
+    return res.status(503).json({ message: "Could not verify admin session." });
+  }
+  req.admin = payload;
+  return next();
 }
 
 function requireUserAuth(req, res, next) {
@@ -1232,22 +1246,55 @@ app.delete("/api/admin/brands/:id", requireAdminAuth, async (req, res) => {
   return res.json({ message: "Brand deleted successfully." });
 });
 
+const adminLoginFailures = new Map();
+const ADMIN_LOGIN_MAX_FAILURES = 5;
+const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+// Per-instance throttle (serverless instances do not share memory), so it slows
+// guessing rather than guaranteeing a global limit.
+function adminLoginThrottleKey(req, identifier) {
+  return `${req.ip || "unknown"}|${identifier}`;
+}
+
+function adminLoginBlocked(key) {
+  const entry = adminLoginFailures.get(key);
+  if (!entry) return false;
+  if (Date.now() - entry.first > ADMIN_LOGIN_WINDOW_MS) {
+    adminLoginFailures.delete(key);
+    return false;
+  }
+  return entry.count >= ADMIN_LOGIN_MAX_FAILURES;
+}
+
+function recordAdminLoginFailure(key) {
+  const entry = adminLoginFailures.get(key);
+  if (!entry || Date.now() - entry.first > ADMIN_LOGIN_WINDOW_MS) {
+    adminLoginFailures.set(key, { count: 1, first: Date.now() });
+  } else {
+    entry.count += 1;
+  }
+}
+
 app.post("/api/admin/auth/login", async (req, res) => {
-  const email = String(req.body?.email || "").trim().toLowerCase();
+  // Sign in with a username or an email address.
+  const identifier = String(req.body?.identifier || req.body?.username || req.body?.email || "").trim().toLowerCase();
   const password = String(req.body?.password || "").trim();
-  if (!email || !password) {
-    return res.status(400).json({ message: "email and password are required." });
+  if (!identifier || !password) {
+    return res.status(400).json({ message: "username and password are required." });
   }
 
-  const admin = await Admin.findOne({ email });
-  if (!admin) {
-    return res.status(401).json({ message: "Invalid admin credentials." });
+  const throttleKey = adminLoginThrottleKey(req, identifier);
+  if (adminLoginBlocked(throttleKey)) {
+    return res.status(429).json({ message: "Too many failed attempts. Try again in 15 minutes." });
   }
 
-  const isValid = await bcrypt.compare(password, admin.passwordHash);
+  const admin = await Admin.findOne(identifier.includes("@") ? { email: identifier } : { usernameKey: identifier });
+  const isValid = admin ? await bcrypt.compare(password, admin.passwordHash) : false;
   if (!isValid) {
+    recordAdminLoginFailure(throttleKey);
     return res.status(401).json({ message: "Invalid admin credentials." });
   }
+  adminLoginFailures.delete(throttleKey);
 
   const token = buildAdminToken(admin);
   return res.json({
@@ -1257,6 +1304,7 @@ app.post("/api/admin/auth/login", async (req, res) => {
       id: String(admin._id),
       name: admin.name,
       email: admin.email,
+      username: admin.username || "",
     },
   });
 });
