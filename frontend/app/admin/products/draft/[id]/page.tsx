@@ -297,6 +297,31 @@ export default function ProductDraftReviewPage() {
         </div>
       ) : null}
 
+      {published && draft.pendingRevision.proposed ? (
+        <div className="rounded-xl border border-sky-300 bg-white p-4 text-sm">
+          <h3 className="font-bold text-zinc-900">Proposed changes — not live yet</h3>
+          <dl className="mt-2 space-y-2">
+            <div><dt className="text-zinc-500">Title (DE)</dt><dd className="font-semibold">{draft.pendingRevision.proposed.titleDe}</dd></div>
+            <div><dt className="text-zinc-500">Title (EN)</dt><dd>{draft.pendingRevision.proposed.titleEn || "—"}</dd></div>
+            <div><dt className="text-zinc-500">Short description</dt><dd>{draft.pendingRevision.proposed.shortDescription || "—"}</dd></div>
+            <div><dt className="text-zinc-500">Description</dt><dd className="whitespace-pre-line">{draft.pendingRevision.proposed.description || "—"}</dd></div>
+            <div>
+              <dt className="text-zinc-500">Specifications ({draft.pendingRevision.proposed.specifications.length})</dt>
+              <dd>
+                {draft.pendingRevision.proposed.specifications.length ? (
+                  <ul className="mt-1 list-disc pl-5">
+                    {draft.pendingRevision.proposed.specifications.map((spec) => (
+                      <li key={spec.key}><span className="font-semibold">{spec.key}:</span> {spec.value}</li>
+                    ))}
+                  </ul>
+                ) : "—"}
+              </dd>
+            </div>
+            <div><dt className="text-zinc-500">Tags</dt><dd>{draft.pendingRevision.proposed.tags.join(", ") || "—"}</dd></div>
+          </dl>
+        </div>
+      ) : null}
+
       {completeness && !completeness.complete ? (
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
           <p className="font-semibold">

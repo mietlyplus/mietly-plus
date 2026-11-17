@@ -320,6 +320,15 @@ export type ProductDraft = {
     imagesChanged: boolean;
     hasListing: boolean;
     updatedAt: string | null;
+    /** What approving would publish, so it can be reviewed first. */
+    proposed: {
+      titleDe: string;
+      titleEn: string;
+      shortDescription: string;
+      description: string;
+      specifications: Array<{ key: string; value: string }>;
+      tags: string[];
+    } | null;
   };
   sourceImageryConfirmed: boolean;
   provenance: {

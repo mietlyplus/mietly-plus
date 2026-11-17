@@ -2500,6 +2500,17 @@ function mapDraft(draft, product) {
       imagesChanged: Boolean(draft.pendingRevision?.imagesChanged),
       hasListing: Boolean(draft.pendingRevision?.listing),
       updatedAt: draft.pendingRevision?.updatedAt || null,
+      // What approving would publish, so it can be reviewed before it goes live.
+      proposed: draft.pendingRevision?.listing
+        ? {
+            titleDe: draft.pendingRevision.listing.titleI18n?.de || draft.pendingRevision.listing.title || "",
+            titleEn: draft.pendingRevision.listing.titleI18n?.en || "",
+            shortDescription: draft.pendingRevision.listing.shortDescription || "",
+            description: draft.pendingRevision.listing.description || "",
+            specifications: (draft.pendingRevision.listing.specifications || []).map((spec) => ({ key: spec.key, value: spec.value })),
+            tags: draft.pendingRevision.listing.tags || [],
+          }
+        : null,
     },
     sourceImageryConfirmed: Boolean(draft.sourceImageryConfirmed),
     provenance: {
@@ -3047,6 +3058,27 @@ app.post("/api/admin/product-drafts/:id/regenerate-text", requireAdminAuth, asyn
 
   if (req.body?.instruction !== undefined) {
     draft.instruction = String(req.body.instruction || "").trim().slice(0, 2000);
+  }
+
+  // Optionally re-read the source first, e.g. after the extractor improved. This
+  // only refreshes the draft's own source record -- the live listing is untouched
+  // until the resulting revision is applied -- and a failed re-read never replaces
+  // source data that already worked.
+  if (req.body?.reextract === true && draft.sourceUrl) {
+    const extraction = await runExtraction(draft.sourceUrl);
+    if (extraction.ok && String(extraction.result.facts?.name || "").trim()) {
+      draft.provenance = {
+        extractedFacts: extraction.result.facts,
+        sourceImages: extraction.result.sourceImages,
+        retailerPrice: extraction.result.retailerPrice || { amount: 0, currency: "" },
+        extractionConfidence: extraction.result.confidence,
+        usedStrategies: extraction.result.usedStrategies,
+        finalUrl: extraction.result.finalUrl || draft.sourceUrl,
+      };
+      draft.steps.extraction.status = "done";
+      draft.steps.extraction.error = "";
+      draft.steps.extraction.completedAt = new Date();
+    }
   }
 
   const { categories, brands } = await loadCatalogueForMatching();

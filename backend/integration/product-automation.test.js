@@ -34,6 +34,7 @@ fetchSource.fetchSourceDocument = async (url) => {
   if (url.includes("/denied")) throw new fetchSource.SourceFetchError("ACCESS_DENIED", "login required");
   if (url.includes("/injection")) return { html: INJECTION_PAGE, finalUrl: url, redirectChain: [url] };
   if (url.includes("/sparse")) return { html: SPARSE_PAGE, finalUrl: url, redirectChain: [url] };
+  if (url.includes("/rich")) return { html: RICH_PAGE, finalUrl: url, redirectChain: [url] };
   return { html: JSON_LD_PAGE, finalUrl: url, redirectChain: [url] };
 };
 
@@ -820,4 +821,49 @@ test("a draft whose model proposed only two views reaches five once the owner ad
   assert.deepEqual(result.body.images.slice(0, 2).map((i) => i.url), ["https://cdn.test/g1.jpg", "https://cdn.test/g2.jpg"], "generated images preserved");
   assert.equal(result.body.images.filter((i) => i.status === "pending").length, 2);
   assert.equal(result.body.imageCompleteness.ready, 3);
+});
+
+// ---------------------------------------------------------------------------
+// Refreshing a published listing from its source -> a reviewable pending revision
+// ---------------------------------------------------------------------------
+
+const RICH_PAGE = `<html><head>
+<script type="application/ld+json">{"@type":"Product","name":"Sony Alpha 7 IV","brand":{"name":"Sony"},"category":"Cameras","description":"Full-frame camera."}</script></head><body>
+<h3>Standardinformationen</h3><ul><li>Gewicht: 658 g</li><li>Garantie: 24 Monate</li></ul></body></html>`;
+
+test("a published listing can be refreshed from its source without changing what is live", async () => {
+  const draft = await createDraft();
+  await makePublishable(draft.id);
+  const published = await asAdmin(`/api/admin/product-drafts/${draft.id}/publish`, { method: "POST", body: JSON.stringify({ confirm: true }) });
+  const slug = published.body.draft.product.slug;
+  const liveBefore = await call(`/api/products/${slug}`);
+  const liveSpecKeys = liveBefore.body.specifications.map((x) => x.key).sort();
+  assert.ok(!liveSpecKeys.includes("Gewicht"), "the live listing does not have the new specs yet");
+
+  // The page has since gained spec lists (or the extractor improved).
+  await ProductDraft.updateOne({ _id: draft.id }, { $set: { sourceUrl: "https://example.com/rich" } });
+  const callsBefore = textCalls;
+  const refreshed = await asAdmin(`/api/admin/product-drafts/${draft.id}/regenerate-text`, { method: "POST", body: JSON.stringify({ reextract: true }) });
+
+  assert.equal(refreshed.status, 200);
+  assert.equal(textCalls, callsBefore + 1, "exactly one text generation");
+  assert.deepEqual(refreshed.body.provenance.extractedFacts.specifications.map((s) => s.key), ["Gewicht", "Garantie"], "source data was refreshed");
+
+  const proposed = refreshed.body.pendingRevision.proposed;
+  assert.ok(proposed, "the owner can see what approving would publish");
+  assert.deepEqual(proposed.specifications.map((s) => s.key), ["Gewicht", "Garantie"]);
+
+  const liveAfter = await call(`/api/products/${slug}`);
+  assert.deepEqual(liveAfter.body.specifications, liveBefore.body.specifications, "the live listing is unchanged until approval");
+  assert.equal(liveAfter.body.title, liveBefore.body.title);
+});
+
+test("a failed re-read never replaces source data that already worked", async () => {
+  const draft = await createDraft();
+  const before = (await asAdmin(`/api/admin/product-drafts/${draft.id}`)).body.provenance.extractedFacts.name;
+
+  await ProductDraft.updateOne({ _id: draft.id }, { $set: { sourceUrl: DENIED_URL } });
+  const result = await asAdmin(`/api/admin/product-drafts/${draft.id}/regenerate-text`, { method: "POST", body: JSON.stringify({ reextract: true }) });
+
+  assert.equal(result.body.provenance.extractedFacts.name, before, "good source data is kept");
 });
