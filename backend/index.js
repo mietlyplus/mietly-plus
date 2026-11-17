@@ -2433,7 +2433,9 @@ function mapDraft(draft, product) {
     instruction: draft.instruction,
     status: draft.status,
     steps: draft.steps,
-    warnings: draft.warnings,
+    warnings: (draft.warnings || []).filter(
+      (warning) => !(warning.code === "no_image_yet" && (draft.images || []).some((image) => image.url))
+    ),
     images: (draft.images || []).map((image) => ({
       id: String(image._id),
       url: image.url,
@@ -2604,8 +2606,13 @@ async function completeDraftGeneration(draft) {
 
   // A product needs an image; fall back to the first source image if the admin
   // uploaded none, otherwise the storefront placeholder is used on publish.
+  // The retailer's photo is a REFERENCE for generation, not a listing image. It
+  // only becomes one as a last resort -- when no generation was planned at all --
+  // because giving it a slot would trim the generated set below five while the
+  // completeness counter still read as full.
   const readyImages = draft.images.filter((image) => image.url);
-  if (readyImages.length === 0 && extraction.result.sourceImages.length > 0) {
+  const generationPlanned = draft.images.some((image) => image.status === "pending");
+  if (readyImages.length === 0 && !generationPlanned && extraction.result.sourceImages.length > 0) {
     draft.images.unshift({
       url: extraction.result.sourceImages[0],
       origin: "source",
@@ -2613,7 +2620,6 @@ async function completeDraftGeneration(draft) {
       status: "ready",
     });
   }
-  // The source reference is an extra entry, so re-apply the cap.
   draft.images = draft.images.slice(0, MAX_DRAFT_IMAGES);
 
   const slug = await ensureUniqueSlug(assembled.slug);

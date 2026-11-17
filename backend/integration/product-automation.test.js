@@ -548,3 +548,42 @@ test("a CSV product has no draft and is untouched by the AI publication rules", 
   const product = await Product.findOne({ slug: "csv-tripod" });
   assert.equal(product.isActive, true, "CSV imports publish directly, as before");
 });
+
+// ---------------------------------------------------------------------------
+// The retailer photo is a reference, not a listing image
+// ---------------------------------------------------------------------------
+
+test("a retailer photo never takes a slot from the generated set", async () => {
+  // The fixture page carries two source images and the owner uploads none.
+  const draft = await createDraft();
+
+  assert.equal(draft.provenance.sourceImages.length, 2, "the page did offer source images");
+  assert.ok(!draft.images.some((image) => image.origin === "source"), "no retailer photo is in the listing");
+  assert.equal(draft.images.length, 5, "all five slots are available for generated images");
+  assert.ok(draft.images.every((image) => image.status === "pending"));
+});
+
+test("a draft with nothing generated yet is not reported as complete", async () => {
+  const draft = await createDraft();
+  assert.equal(draft.imageCompleteness.ready, 0);
+  assert.equal(draft.imageCompleteness.complete, false);
+  assert.equal(draft.imageCompleteness.missing, 5);
+});
+
+test("until the first image exists the cover is the placeholder, not the retailer photo", async () => {
+  const draft = await createDraft();
+  const product = await Product.findById(draft.productId);
+  assert.ok(product.imageUrl.startsWith("data:image/svg+xml"), "placeholder cover");
+  assert.ok(!product.imageUrl.includes("cdn.example.com"), "must not borrow the retailer's photo");
+});
+
+test("the stale 'no image yet' warning disappears once an image exists", async () => {
+  const draft = await createDraft();
+  assert.ok(draft.warnings.some((warning) => warning.code === "no_image_yet"));
+
+  await asAdmin(`/api/admin/product-drafts/${draft.id}/images`, {
+    method: "PATCH", body: JSON.stringify({ action: "replace", imageId: draft.images[0].id, url: "https://cdn.test/mine.jpg" }),
+  });
+  const reread = await asAdmin(`/api/admin/product-drafts/${draft.id}`);
+  assert.ok(!reread.body.warnings.some((warning) => warning.code === "no_image_yet"));
+});
