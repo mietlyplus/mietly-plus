@@ -26,14 +26,14 @@ function formatAmount(value: number) {
 
 const cardCopy = {
   en: {
-    available: "Available", specialOffer: "Special Offer", off: (n: number) => `${n}% Off`,
+    available: "Available", off: (n: number) => `${n}% Off`,
     fallbackDescription: "Flexible rental with trusted quality checks.",
     category: "Category", general: "General", rent: "Rent", from: "from ",
     week: "week", month: "month", day: "day", days: "days",
-    vat: "{t.vat}", rentNow: "Rent it Now", wishlist: "wishlist",
+    vat: "*Incl. VAT", rentNow: "Rent it Now", wishlist: "wishlist",
   },
   de: {
-    available: "Verfügbar", specialOffer: "Angebot", off: (n: number) => `${n}% Rabatt`,
+    available: "Verfügbar", off: (n: number) => `${n}% Rabatt`,
     fallbackDescription: "Flexibel mieten mit geprüfter Qualität.",
     category: "Kategorie", general: "Allgemein", rent: "Miete", from: "ab ",
     week: "Woche", month: "Monat", day: "Tag", days: "Tage",
@@ -84,7 +84,7 @@ export function RentalProductCard({
     : useMonthly ? `/ ${t.month}` : `/ ${t.week}`;
   const title = product.titleI18n?.[locale] || product.title;
   const categoryName = product.category?.name?.[locale] || product.category?.name?.en || t.general;
-  const offerBadge = discountPercent > 0 ? t.off(discountPercent) : t.specialOffer;
+  const offerBadge = t.off(discountPercent);
 
   return (
     <article
@@ -95,9 +95,12 @@ export function RentalProductCard({
         <span className="rounded-full border border-[rgba(73,153,173,0.35)] bg-[rgba(73,153,173,0.14)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(47,118,135)] md:px-2.5 md:py-1 md:text-xs">
           {t.available}
         </span>
-        <span className="rounded-full border border-[rgba(73,153,173,0.35)] bg-[rgba(73,153,173,0.14)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(47,118,135)] md:px-2.5 md:py-1 md:text-xs">
-          {offerBadge}
-        </span>
+        {/* Only a genuine stored offer (offer price below the real base price) earns a badge. */}
+        {hasOffer && discountPercent > 0 ? (
+          <span className="rounded-full border border-[rgba(73,153,173,0.35)] bg-[rgba(73,153,173,0.14)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(47,118,135)] md:px-2.5 md:py-1 md:text-xs">
+            {offerBadge}
+          </span>
+        ) : null}
       </div>
 
       <button
@@ -149,10 +152,8 @@ export function RentalProductCard({
               </p>
               {hasOffer ? (
                 <p className="text-xs text-zinc-400 line-through md:text-sm">EUR {formatAmount(effectiveBuyerPrice)}</p>
-              ) : useMonthly ? (
-                <p className="text-xs text-zinc-400 line-through md:text-sm">EUR {formatAmount(effectivePrice + 50)}</p>
               ) : null}
-              <p className="text-[11px] font-medium text-zinc-500 md:text-xs">*Inclusive VAT</p>
+              <p className="text-[11px] font-medium text-zinc-500 md:text-xs">{t.vat}</p>
             </div>
           </div>
 

@@ -45,28 +45,34 @@ function leadDaysOf(product) {
 }
 
 /**
- * Checks each line's start date against its product's lead time, exactly.
- * Lines without a start date or a known product are left to the existing checks.
+ * Checks one start date against a product's lead time, exactly.
  * @returns {string|null} an error message, or null
  */
+function checkStartDate(product, startDate, now = new Date()) {
+  const start = String(startDate || "").trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || Number.isNaN(Date.parse(`${start}T00:00:00Z`))) {
+    return "A rental start date is not valid.";
+  }
+  const leadDays = leadDaysOf(product);
+  const earliest = earliestStartDate(leadDays, now);
+  if (start < earliest) {
+    return `${product?.title || "This product"} needs ${leadDays} day(s) of delivery lead time. The earliest start date is ${earliest}.`;
+  }
+  return null;
+}
+
+/** Same check over cart lines; lines without a date or a known product are skipped. */
 function checkStartDates(items, productById, now = new Date()) {
   for (const item of items) {
     const product = productById.get(String(item.productId || "").trim());
     if (!product || !item.startDate) continue;
-    const start = String(item.startDate).trim().slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || Number.isNaN(Date.parse(`${start}T00:00:00Z`))) {
-      return "A rental start date is not valid.";
-    }
-    const leadDays = leadDaysOf(product);
-    const earliest = earliestStartDate(leadDays, now);
-    if (start < earliest) {
-      return `${product.title || "This product"} needs ${leadDays} day(s) of delivery lead time. The earliest start date is ${earliest}.`;
-    }
+    const message = checkStartDate(product, item.startDate, now);
+    if (message) return message;
   }
   return null;
 }
 
 module.exports = {
   DEFAULT_LEAD_DAYS, MAX_LEAD_DAYS, TIME_ZONE,
-  berlinToday, addDaysToDateString, earliestStartDate, parseDeliveryLeadDays, leadDaysOf, checkStartDates,
+  berlinToday, addDaysToDateString, earliestStartDate, parseDeliveryLeadDays, leadDaysOf, checkStartDate, checkStartDates,
 };

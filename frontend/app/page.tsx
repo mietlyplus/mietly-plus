@@ -9,11 +9,13 @@ import { HomeRentNowCta } from "@/components/home-rent-now-cta";
 import { HomeRentalSteps } from "@/components/home-rental-steps";
 import { HomeTrustAndSteps } from "@/components/home-trust-and-steps";
 import { HomeFooter } from "@/components/home-footer";
+import { HomeHeading } from "@/components/home-heading";
 
 export default function Home() {
   return (
     <div className="min-h-screen bg-white">
       <ClientNavbar />
+      <HomeHeading />
       <HomeBannerSection />
       <HomeBenefitsStrip />
       <HomeCategoriesSection />

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -6,8 +6,15 @@ import { fetchMostPopularProducts } from "@/lib/api";
 import { Product } from "@/lib/types";
 import { RentalProductCard } from "@/components/rental-product-card";
 import { useWishlist } from "@/lib/use-wishlist";
+import { useSiteLocale } from "@/lib/use-site-locale";
+
+const headingCopy = {
+  en: { title: "Most Popular Products", subtitle: "Trending rentals this week", left: "Scroll left", right: "Scroll right" },
+  de: { title: "Beliebteste Produkte", subtitle: "Das wird diese Woche gern gemietet", left: "Nach links scrollen", right: "Nach rechts scrollen" },
+};
 
 export function HomePopularProducts() {
+  const { locale } = useSiteLocale("de");
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const railRef = useRef<HTMLDivElement>(null);
@@ -50,8 +57,8 @@ export function HomePopularProducts() {
     <section className="mx-auto w-full max-w-[1280px] px-4 py-10">
       <div className="mb-5 flex items-end justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-zinc-900 md:text-3xl">Most Popular Products</h2>
-          <p className="mt-1 text-sm text-zinc-500">Trending rentals this week</p>
+          <h2 className="text-2xl font-bold text-zinc-900 md:text-3xl">{headingCopy[locale].title}</h2>
+          <p className="mt-1 text-sm text-zinc-500">{headingCopy[locale].subtitle}</p>
         </div>
         {showControls ? (
           <div className="flex items-center gap-2">
@@ -59,7 +66,7 @@ export function HomePopularProducts() {
               type="button"
               onClick={() => scrollByCards("left")}
               className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-300 text-zinc-700 hover:border-[rgb(73,153,173)] hover:text-[rgb(60,138,158)]"
-              aria-label="Scroll left"
+              aria-label={headingCopy[locale].left}
             >
               <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M12.5 4.5L7 10l5.5 5.5" />
@@ -69,7 +76,7 @@ export function HomePopularProducts() {
               type="button"
               onClick={() => scrollByCards("right")}
               className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-300 text-zinc-700 hover:border-[rgb(73,153,173)] hover:text-[rgb(60,138,158)]"
-              aria-label="Scroll right"
+              aria-label={headingCopy[locale].right}
             >
               <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M7.5 4.5L13 10l-5.5 5.5" />

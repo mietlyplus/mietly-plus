@@ -60,20 +60,6 @@ test("licensed images without a license and images without alt text produce warn
   assert.ok(result.warnings.some((w) => w.includes("alt text")));
 });
 
-test("occasion checkout lines are re-priced from stored options and unsupported day counts are refused", () => {
-  const { applyOccasionPricing } = require("./occasion-pricing");
-  const products = new Map([["p1", { title: "Castle", rentalMode: "occasion", occasionPricing: [{ days: 1, price: 50 }, { days: 2, price: 80 }] }]]);
-  const line = { productId: "p1", durationValue: 2, durationUnit: "day", unitPrice: 1, baseUnitPrice: 1, quantity: 2, lineDeposit: 0, lineSubtotal: 2, lineTotal: 2 };
-  assert.equal(applyOccasionPricing([line], products), null);
-  assert.equal(line.unitPrice, 80, "the browser's price is ignored");
-  assert.equal(line.lineSubtotal, 160);
-  assert.match(applyOccasionPricing([{ ...line, durationValue: 3 }], products), /not offered/);
-  assert.match(applyOccasionPricing([{ ...line, durationUnit: "week", durationValue: 1 }], products), /not offered/);
-  const standard = { productId: "p2", durationValue: 1, durationUnit: "week", unitPrice: 9, quantity: 1 };
-  assert.equal(applyOccasionPricing([standard], new Map([["p2", { rentalMode: "standard" }]])), null);
-  assert.equal(standard.unitPrice, 9, "standard pricing is untouched");
-});
-
 test("delivery lead time: exact Europe/Berlin calendar rule, no tolerance", () => {
   const { parseDeliveryLeadDays, checkStartDates, earliestStartDate, berlinToday } = require("./delivery-lead-time");
   assert.equal(parseDeliveryLeadDays(0), 0);

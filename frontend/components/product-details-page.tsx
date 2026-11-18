@@ -220,10 +220,11 @@ export default function ProductDetailsPage() {
   const visibleSpecs = showAllSpecs ? product?.specifications || [] : (product?.specifications || []).slice(0, 3);
   const productNotes = productNotesCopy[locale];
   const deliveryFee = Number(product?.deliveryFee || 0);
+  // Reflects this product's own configuration: its lead time and its delivery fee.
   const deliveryLine =
     locale === "de"
-      ? `Lieferung in 1-4 Werktagen für €${formatAmount(deliveryFee)}.`
-      : `Delivery in 1-4 business days for €${formatAmount(deliveryFee)}.`;
+      ? `Liefervorlauf: ${leadDays} ${leadDays === 1 ? "Tag" : "Tage"}. Liefergebühr: €${formatAmount(deliveryFee)}.`
+      : `Delivery lead time: ${leadDays} ${leadDays === 1 ? "day" : "days"}. Delivery fee: €${formatAmount(deliveryFee)}.`;
 
   const scrollRelated = (direction: "left" | "right") => {
     const rail = relatedRailRef.current;
@@ -244,8 +245,10 @@ export default function ProductDetailsPage() {
       slug: product.slug,
       categorySlug: product.category?.slug || "",
       title: product.title,
+      titleI18n: product.titleI18n,
       imageUrl: product.imageUrl,
       categoryName: product.category?.name.en || "General",
+      categoryNameI18n: product.category?.name,
       brandName: product.brand || product.brandData?.name || "",
       unitPrice: shownPrice,
       baseUnitPrice: isOccasion ? shownPrice : effectiveUnitPrice,
@@ -257,6 +260,7 @@ export default function ProductDetailsPage() {
       depositEnabled: Boolean(product.depositEnabled),
       securityDeposit: Number(product.securityDeposit || 0),
       deliveryFee: Number(product.deliveryFee || 0),
+      maxRentalQuantity: Math.max(1, Number(product.maxRentalQuantity) || 1),
     });
     setCartFeedback(pdpCopy[locale].addedToCart);
     window.setTimeout(() => setCartFeedback(""), 2500);
@@ -389,7 +393,7 @@ export default function ProductDetailsPage() {
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-semibold text-zinc-800">{pdpCopy[locale].selectPeriod}</p>
                       <span className="rounded-full border border-[rgba(73,153,173,0.25)] bg-[rgba(73,153,173,0.12)] px-3 py-1 text-xs font-bold text-[rgb(47,118,135)]">
-                        {durationText(activeDuration, rentalMode, locale)} selected
+                        {durationText(activeDuration, rentalMode, locale)} {pdpCopy[locale].selected}
                       </span>
                     </div>
                     <div className={`mt-3 grid gap-2 ${showWeekly && showMonthly ? "grid-cols-2" : "grid-cols-1"}`}>

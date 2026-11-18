@@ -4,6 +4,7 @@ import "./globals.css";
 import { DesktopScaleWrapper } from "@/components/desktop-scale-wrapper";
 import { CookieConsentPopup } from "@/components/cookie-consent-popup";
 import { JsonLd } from "@/components/json-ld";
+import { LocaleHtmlSync } from "@/components/locale-html-sync";
 import { SITE_NAME, SITE_URL } from "@/lib/seo";
 
 const manrope = Manrope({
@@ -42,6 +43,7 @@ export default function RootLayout({
             ],
           }}
         />
+        <LocaleHtmlSync />
         <DesktopScaleWrapper>
           {children}
           <CookieConsentPopup />

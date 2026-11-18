@@ -1,7 +1,18 @@
-﻿export function HomeBenefitsStrip() {
+"use client";
+
+import { useSiteLocale } from "@/lib/use-site-locale";
+
+const benefitLabels = {
+  en: ["500,000+ happy customers", "Low monthly costs", "Rent from 1 to 24+ months", "Leihfluss Care available"],
+  de: ["500.000+ zufriedene Kunden", "Niedrige Monatskosten", "Mieten von 1 bis 24+ Monaten", "Leihfluss Care verfügbar"],
+};
+
+export function HomeBenefitsStrip() {
+  const { locale } = useSiteLocale("de");
+  const labels = benefitLabels[locale];
   const items = [
     {
-      label: "500,000+ happy customers",
+      label: labels[0],
       icon: (
         <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="12" cy="12" r="10" />
@@ -12,7 +23,7 @@
       ),
     },
     {
-      label: "Low monthly costs",
+      label: labels[1],
       icon: (
         <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="2" y="5" width="20" height="14" rx="2" />
@@ -21,7 +32,7 @@
       ),
     },
     {
-      label: "Rent from 1 to 24+ months",
+      label: labels[2],
       icon: (
         <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="3" y="4" width="18" height="18" rx="3" />
@@ -30,7 +41,7 @@
       ),
     },
     {
-      label: "Leihfluss Care available",
+      label: labels[3],
       icon: (
         <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M4 12a8 8 0 0116 0M7 12v6M17 12v6M7 18h10" />

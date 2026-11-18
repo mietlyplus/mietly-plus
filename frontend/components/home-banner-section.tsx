@@ -1,8 +1,14 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { fetchPublicBanners } from "@/lib/api";
 import { Banner } from "@/lib/types";
+import { useSiteLocale } from "@/lib/use-site-locale";
+
+const bannerCopy = {
+  en: { prev: "Prev", next: "Next", prevLabel: "Previous banner", nextLabel: "Next banner", goTo: (n: number) => `Go to banner ${n}`, alt: "Banner" },
+  de: { prev: "Zurück", next: "Weiter", prevLabel: "Vorheriges Banner", nextLabel: "Nächstes Banner", goTo: (n: number) => `Zu Banner ${n}`, alt: "Banner" },
+};
 
 function resolveBannerImageSrc(rawSrc: string) {
   try {
@@ -20,6 +26,8 @@ function resolveBannerImageSrc(rawSrc: string) {
 }
 
 export function HomeBannerSection() {
+  const { locale } = useSiteLocale("de");
+  const t = bannerCopy[locale];
   const [banners, setBanners] = useState<Banner[]>([]);
   const [isMobile, setIsMobile] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -85,7 +93,7 @@ export function HomeBannerSection() {
         <div className="relative aspect-[16/8] w-full bg-white md:aspect-[16/6]">
           <img
             src={imageSrc}
-            alt={currentBanner.title || "Banner"}
+            alt={currentBanner.title || t.alt}
             className="h-full w-full object-cover md:object-contain"
             loading="lazy"
           />
@@ -98,9 +106,9 @@ export function HomeBannerSection() {
             type="button"
             onClick={goPrev}
             className="rounded-full border border-[rgba(73,153,173,0.35)] px-3 py-1 text-sm text-[rgb(73,153,173)] hover:bg-[rgba(73,153,173,0.10)]"
-            aria-label="Previous banner"
+            aria-label={t.prevLabel}
           >
-            Prev
+            {t.prev}
           </button>
           <div className="flex items-center gap-2">
             {banners.map((banner, index) => (
@@ -111,7 +119,7 @@ export function HomeBannerSection() {
                 className={`h-2.5 rounded-full transition-all ${
                   index === activeIndex ? "w-7 bg-[rgb(73,153,173)]" : "w-2.5 bg-[rgba(73,153,173,0.35)]"
                 }`}
-                aria-label={`Go to banner ${index + 1}`}
+                aria-label={t.goTo(index + 1)}
               />
             ))}
           </div>
@@ -119,9 +127,9 @@ export function HomeBannerSection() {
             type="button"
             onClick={goNext}
             className="rounded-full border border-[rgba(73,153,173,0.35)] px-3 py-1 text-sm text-[rgb(73,153,173)] hover:bg-[rgba(73,153,173,0.10)]"
-            aria-label="Next banner"
+            aria-label={t.nextLabel}
           >
-            Next
+            {t.next}
           </button>
         </div>
       ) : null}

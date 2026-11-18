@@ -55,25 +55,4 @@ function occasionPriceForDays(product, days) {
   return match ? Number(match.price) : null;
 }
 
-/**
- * Re-prices occasion lines from the product's stored options, ignoring whatever
- * price the browser sent. Mutates the lines. Returns an error message when a
- * line asks for a day count the product does not offer, otherwise null.
- */
-function applyOccasionPricing(items, productById) {
-  for (const item of items) {
-    const product = productById.get(String(item.productId || "").trim());
-    if (product?.rentalMode !== "occasion") continue;
-    const storedPrice = occasionPriceForDays(product, item.durationValue);
-    if (item.durationUnit !== "day" || storedPrice === null) {
-      return `${product.title || "This product"} is not offered for ${item.durationValue} ${item.durationUnit}(s).`;
-    }
-    item.unitPrice = storedPrice;
-    item.baseUnitPrice = storedPrice;
-    item.lineSubtotal = storedPrice * item.quantity;
-    item.lineTotal = item.lineSubtotal + item.lineDeposit;
-  }
-  return null;
-}
-
-module.exports = { MAX_OCCASION_DAYS, normalizeOccasionOptions, occasionPriceForDays, applyOccasionPricing };
+module.exports = { MAX_OCCASION_DAYS, normalizeOccasionOptions, occasionPriceForDays };

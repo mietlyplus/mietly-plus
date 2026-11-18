@@ -183,11 +183,16 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: "",
       trim: true,
+      index: true,
     },
     stripePaymentIntentId: {
       type: String,
       default: "",
       trim: true,
+    },
+    paymentConfirmedAt: {
+      type: Date,
+      default: null,
     },
   },
   {
