@@ -58,7 +58,12 @@ export function RentalProductCard({
     effectivePrice = effectiveBuyerPrice > 0 ? effectiveBuyerPrice : 0;
   }
 
-  const priceUnit = useMonthly ? "/ month" : "/ week";
+  const occasionOptions = product.rentalMode === "occasion" ? [...(product.occasionPricing || [])].sort((a, b) => a.price - b.price) : [];
+  const isOccasion = occasionOptions.length > 0;
+  if (isOccasion) effectivePrice = occasionOptions[0].price;
+  const priceUnit = isOccasion
+    ? `/ ${occasionOptions[0].days} day${occasionOptions[0].days > 1 ? "s" : ""}`
+    : useMonthly ? "/ month" : "/ week";
   const title = product.titleI18n?.[locale] || product.title;
   const categoryName = product.category?.name?.[locale] || product.category?.name?.en || "General";
   const offerBadge = discountPercent > 0 ? `${discountPercent}% Off` : "Special Offer";

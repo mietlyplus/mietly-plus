@@ -13,6 +13,9 @@ import { Category, Product } from "@/lib/types";
 type StockFilter = "all" | "in_stock" | "out_of_stock";
 
 function getEffectivePrice(product: Product) {
+  if (product.rentalMode === "occasion" && product.occasionPricing?.length) {
+    return Math.min(...product.occasionPricing.map((option) => option.price));
+  }
   if (product.offerPrice > 0 && product.offerPrice < product.buyerPrice) return product.offerPrice;
   if (product.buyerPrice > 0) return product.buyerPrice;
   return product.monthlyPrice;

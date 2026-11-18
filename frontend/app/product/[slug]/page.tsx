@@ -1,36 +1,12 @@
-"use client";
+import { notFound, permanentRedirect } from "next/navigation";
+import { getProductForSeo, productPath } from "@/lib/seo";
 
-import { useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { fetchPublicProductBySlug } from "@/lib/api";
-import { buildRentalProductPath } from "@/lib/product-path";
-
-export default function LegacyProductPageRedirect() {
-  const router = useRouter();
-  const params = useParams();
-  const slugParam = params?.slug;
-  const slug = Array.isArray(slugParam) ? String(slugParam[0] || "") : String(slugParam || "");
-
-  useEffect(() => {
-    if (!slug) {
-      router.replace("/shop");
-      return;
-    }
-
-    fetchPublicProductBySlug(slug)
-      .then((product) => {
-        const categorySlug = String(product?.category?.slug || "").trim();
-        if (!categorySlug) {
-          router.replace("/shop");
-          return;
-        }
-
-        router.replace(buildRentalProductPath(categorySlug, slug));
-      })
-      .catch(() => {
-        router.replace("/shop");
-      });
-  }, [router, slug]);
-
-  return null;
+// Old product URLs (/product/<slug>) redirect permanently to the canonical
+// category URL, on the server, so search engines transfer the old address.
+export default async function LegacyProductPageRedirect({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const product = await getProductForSeo(slug);
+  if (!product) notFound();
+  if (!product.category?.slug) permanentRedirect("/shop");
+  permanentRedirect(productPath(product));
 }

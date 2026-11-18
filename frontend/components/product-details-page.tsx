@@ -85,6 +85,7 @@ export default function ProductDetailsPage() {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [rentalMode, setRentalMode] = useState<"week" | "month">("week");
   const [activeDuration, setActiveDuration] = useState(1);
+  const [occasionDays, setOccasionDays] = useState(0);
   const [deliveryDate, setDeliveryDate] = useState(toDateInputValue(addDays(new Date(), 2)));
   const [showAllSpecs, setShowAllSpecs] = useState(false);
   const [cartFeedback, setCartFeedback] = useState("");
@@ -137,6 +138,7 @@ export default function ProductDetailsPage() {
   const minDeliveryDate = useMemo(() => toDateInputValue(addDays(new Date(), 2)), []);
 
   const title = product?.titleI18n?.[locale] || product?.title || "";
+  const altFor = (index: number) => product?.imageAlts?.[index]?.[locale] || product?.imageAlts?.[index]?.de || (index === 0 ? title : `${title} ${index + 1}`);
   const description = product?.descriptionI18n?.[locale] || product?.description || "";
   
   const currentImage = images[activeImageIndex] || product?.imageUrl || "";
@@ -166,6 +168,14 @@ export default function ProductDetailsPage() {
   const showMonthly = isMonthlyAvailable || (!isWeeklyAvailable && !isMonthlyAvailable);
   const multipliedOfferPrice = effectiveUnitPrice * activeDuration;
   const multipliedBuyerPrice = buyerPrice * activeDuration;
+  // Occasion products rent by the day from explicit stored prices (never multiplied).
+  const occasionOptions = product?.rentalMode === "occasion" ? [...(product.occasionPricing || [])].sort((a, b) => a.days - b.days) : [];
+  const isOccasion = occasionOptions.length > 0;
+  const selectedOccasion = occasionOptions.find((option) => option.days === occasionDays) || occasionOptions[0];
+  const shownPrice = isOccasion ? selectedOccasion.price : multipliedOfferPrice;
+  const shownDuration = isOccasion ? selectedOccasion.days : activeDuration;
+  const shownUnit: Product["rentalPeriodUnit"] = isOccasion ? "day" : rentalMode;
+  const shownHasOffer = !isOccasion && hasOffer;
   const visibleSpecs = showAllSpecs ? product?.specifications || [] : (product?.specifications || []).slice(0, 3);
   const productNotes = productNotesCopy[locale];
   const deliveryFee = Number(product?.deliveryFee || 0);
@@ -192,10 +202,10 @@ export default function ProductDetailsPage() {
       imageUrl: product.imageUrl,
       categoryName: product.category?.name.en || "General",
       brandName: product.brand || product.brandData?.name || "",
-      unitPrice: multipliedOfferPrice,
-      baseUnitPrice: effectiveUnitPrice,
-      durationValue: activeDuration,
-      durationUnit: rentalMode,
+      unitPrice: shownPrice,
+      baseUnitPrice: isOccasion ? shownPrice : effectiveUnitPrice,
+      durationValue: shownDuration,
+      durationUnit: shownUnit,
       startDate: deliveryDate,
       quantity: 1,
       verificationRequired: product.verificationRequired !== false,
@@ -264,7 +274,7 @@ export default function ProductDetailsPage() {
                   ) : null}
 
                   {currentImage ? (
-                    <img src={currentImage} alt={title} className="h-full w-full object-contain" />
+                    <img src={currentImage} alt={altFor(Math.max(0, images.indexOf(currentImage)))} className="h-full w-full object-contain" />
                   ) : null}
 
                   {images.length > 1 ? (
@@ -293,7 +303,7 @@ export default function ProductDetailsPage() {
                           : "border-zinc-200 hover:border-[rgba(73,153,173,0.35)]"
                       }`}
                     >
-                      <img src={image} alt={`${title} ${index + 1}`} className="h-full w-full object-cover" />
+                      <img src={image} alt={altFor(index)} className="h-full w-full object-cover" />
                     </button>
                   ))}
                 </div>
@@ -303,6 +313,33 @@ export default function ProductDetailsPage() {
                 <div className="rounded-3xl border border-[rgba(73,153,173,0.28)] bg-white p-5 shadow-[0_18px_45px_-32px_rgba(73,153,173,0.65)]">
                   <h1 className="text-3xl font-extrabold text-zinc-900 md:text-[2.1rem]">{title}</h1>
 
+                  {isOccasion ? (
+                  <div className="mt-5">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-zinc-800">Choose how many days</p>
+                      <span className="rounded-full border border-[rgba(73,153,173,0.25)] bg-[rgba(73,153,173,0.12)] px-3 py-1 text-xs font-bold text-[rgb(47,118,135)]">
+                        {durationText(shownDuration, "day")} selected
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {occasionOptions.map((option) => (
+                        <button
+                          key={option.days}
+                          type="button"
+                          onClick={() => setOccasionDays(option.days)}
+                          className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                            option.days === shownDuration
+                              ? "border-[rgb(73,153,173)] bg-[rgba(73,153,173,0.12)] text-[rgb(47,118,135)]"
+                              : "border-zinc-200 text-zinc-600 hover:border-[rgba(73,153,173,0.35)]"
+                          }`}
+                        >
+                          {durationText(option.days, "day")}
+                          <span className="block text-xs font-bold">EUR {formatAmount(option.price)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  ) : (
                   <div className="mt-5">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-semibold text-zinc-800">Select your rental period</p>
@@ -370,6 +407,7 @@ export default function ProductDetailsPage() {
                       Selected: {durationText(activeDuration, rentalMode)}
                     </p>
                   </div>
+                  )}
 
                   <div className="mt-5">
                     <p className="text-sm font-semibold text-zinc-800">Start date</p>
@@ -386,7 +424,7 @@ export default function ProductDetailsPage() {
                   </div>
 
                   <div className="mt-5 border-t border-zinc-200 pt-4">
-                    {hasOffer ? (
+                    {shownHasOffer ? (
                       <div className="flex items-end gap-2">
                         <span className="text-2xl text-zinc-400 line-through">EUR {formatAmount(multipliedBuyerPrice)}</span>
                         <span className="text-4xl font-extrabold text-rose-600">EUR {formatAmount(multipliedOfferPrice)}</span>
@@ -394,8 +432,8 @@ export default function ProductDetailsPage() {
                       </div>
                     ) : (
                       <div className="flex items-end gap-2">
-                        <span className="text-4xl font-extrabold text-[rgb(47,118,135)]">EUR {formatAmount(multipliedOfferPrice)}</span>
-                        <span className="pb-1 text-sm font-semibold text-zinc-700">/{durationText(activeDuration, rentalMode)}</span>
+                        <span className="text-4xl font-extrabold text-[rgb(47,118,135)]">EUR {formatAmount(shownPrice)}</span>
+                        <span className="pb-1 text-sm font-semibold text-zinc-700">/{durationText(shownDuration, shownUnit)}</span>
                       </div>
                     )}
                     {product.depositEnabled ? (

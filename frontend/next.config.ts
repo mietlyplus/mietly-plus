@@ -8,6 +8,10 @@ const usePreviewBackendProxy =
   process.env.VERCEL_ENV === "preview" && Boolean(process.env.PREVIEW_BACKEND_PROXY_URL);
 
 const nextConfig: NextConfig = {
+  async headers() {
+    // Admin pages must never be indexed, whatever robots.txt says.
+    return [{ source: "/admin/:path*", headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }] }];
+  },
   env: usePreviewBackendProxy ? { NEXT_PUBLIC_API_MODE: "preview-proxy" } : {},
   images: {
     remotePatterns: [

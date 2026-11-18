@@ -230,6 +230,30 @@ const productSchema = new mongoose.Schema(
       ogDescription: { type: String, default: "", trim: true },
       ogImageUrl: { type: String, default: "", trim: true },
     },
+    // "standard" products rent by week/month. "occasion" products rent by the day
+    // (1-7 days) from explicit prices in occasionPricing; nothing is multiplied.
+    rentalMode: { type: String, enum: ["standard", "occasion"], default: "standard" },
+    occasionPricing: {
+      type: [{ _id: false, days: { type: Number, min: 1, max: 7 }, price: { type: Number, min: 0 } }],
+      default: [],
+    },
+    model: { type: String, default: "", trim: true },
+    series: { type: String, default: "", trim: true },
+    identifiers: {
+      ean: { type: String, default: "", trim: true },
+      gtin: { type: String, default: "", trim: true },
+      mpn: { type: String, default: "", trim: true },
+    },
+    // For bundles and party packages: what is in the box.
+    includedItems: {
+      type: [{ _id: false, de: { type: String, trim: true }, en: { type: String, trim: true }, quantity: { type: Number, min: 1, default: 1 } }],
+      default: [],
+    },
+    // Alt text aligned with [imageUrl, ...galleryImages].
+    imageAlts: {
+      type: [{ _id: false, de: { type: String, default: "", trim: true }, en: { type: String, default: "", trim: true } }],
+      default: [],
+    },
     isMostPopular: {
       type: Boolean,
       default: false,

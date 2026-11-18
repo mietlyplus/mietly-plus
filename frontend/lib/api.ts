@@ -1523,3 +1523,42 @@ export async function discardProductDraft(adminToken: string, draftId: string) {
     method: "DELETE",
   });
 }
+
+export type ProductPackageItem = {
+  id: string;
+  externalId: string;
+  title: string;
+  rentalMode: "standard" | "occasion";
+  status: "ready" | "invalid" | "imported";
+  errors: string[];
+  warnings: string[];
+  imageCount: number;
+  importedDraftId: string | null;
+  importedProductId: string | null;
+  importedAt: string | null;
+  updatedAt: string;
+};
+
+export function submitProductPackages(adminToken: string, packages: unknown[]) {
+  return adminJson<{ results: Array<Partial<ProductPackageItem> & { externalId: string; status: string; errors: string[]; warnings: string[] }> }>(
+    "/api/admin/product-packages",
+    adminToken,
+    { method: "POST", body: JSON.stringify({ packages }) }
+  );
+}
+
+export function fetchProductPackages(adminToken: string) {
+  return adminJson<{ items: ProductPackageItem[] }>("/api/admin/product-packages", adminToken);
+}
+
+export function importProductPackages(adminToken: string, body: { ids?: string[]; allReady?: boolean }) {
+  return adminJson<{
+    imported: Array<{ id: string; externalId: string; draftId: string; productId: string }>;
+    failed: Array<{ id: string; externalId: string; message: string }>;
+    remaining: number;
+  }>("/api/admin/product-packages/import", adminToken, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function deleteProductPackage(adminToken: string, id: string) {
+  return adminJson<{ message: string }>(`/api/admin/product-packages/${encodeURIComponent(id)}`, adminToken, { method: "DELETE" });
+}

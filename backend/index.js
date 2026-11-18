@@ -977,6 +977,13 @@ function mapProduct(product) {
     refundable: Boolean(product.refundable),
     specifications: product.specifications || [],
     seo: product.seo || {},
+    rentalMode: product.rentalMode || "standard",
+    occasionPricing: (product.occasionPricing || []).map((o) => ({ days: o.days, price: o.price })),
+    model: product.model || "",
+    series: product.series || "",
+    identifiers: { ean: product.identifiers?.ean || "", gtin: product.identifiers?.gtin || "", mpn: product.identifiers?.mpn || "" },
+    includedItems: (product.includedItems || []).map((i) => ({ de: i.de || "", en: i.en || "", quantity: i.quantity || 1 })),
+    imageAlts: (product.imageAlts || []).map((a) => ({ de: a.de || "", en: a.en || "" })),
     isMostPopular: Boolean(product.isMostPopular),
     isActive: Boolean(product.isActive),
     createdAt: product.createdAt,
@@ -2877,6 +2884,225 @@ app.get("/api/admin/product-drafts/:id", requireAdminAuth, async (req, res) => {
 });
 
 // Step 1: extract + generate text + create the private Product.
+// ---------------------------------------------------------------------------
+// AI Product Queue: prepared product packages (JSON) -> private drafts.
+// Nothing here publishes. Import creates an inactive Product plus a draft, which
+// goes through the same review and explicit publication as every other draft.
+// ---------------------------------------------------------------------------
+const ProductPackage = require("./models/ProductPackage");
+const { applyOccasionPricing } = require("./lib/occasion-pricing");
+const { validateProductPackage, buildPackageProductPayload } = require("./lib/product-package");
+const { buildSlug: buildPackageSlug, matchCategory: matchPackageCategory, matchBrand: matchPackageBrand } = require("./lib/product-payload");
+
+const PACKAGE_UPLOAD_LIMIT = 25;
+const PACKAGE_IMPORT_BUDGET_MS = 40 * 1000;
+const PACKAGE_DRAFT_IMAGE_CAP = 5;
+
+function summarisePackage(doc) {
+  return {
+    id: String(doc._id),
+    externalId: doc.externalId,
+    title: doc.title,
+    rentalMode: doc.rentalMode,
+    status: doc.status,
+    errors: doc.problems || [],
+    warnings: doc.warnings || [],
+    imageCount: (doc.payload?.images || []).length,
+    importedDraftId: doc.importedDraftId ? String(doc.importedDraftId) : null,
+    importedProductId: doc.importedProductId ? String(doc.importedProductId) : null,
+    importedAt: doc.importedAt,
+    updatedAt: doc.updatedAt,
+  };
+}
+
+// Images hosted on our own Cloudinary account are kept as they are; any other
+// https image is downloaded under the same SSRF and size limits as the link
+// workflow and re-hosted, so a listing never depends on someone else's server.
+async function hostPackageImage(image) {
+  const url = image.url;
+  if (/^https:\/\/res\.cloudinary\.com\//i.test(url)) return url;
+  const fetched = await fetchImageAsBase64(url);
+  if (!fetched) throw new Error(`Could not download ${url}`);
+  return uploadGeneratedImage(fetched.base64, fetched.mimeType);
+}
+
+async function importPackage(doc, adminId) {
+  const pkg = doc.payload;
+  const extraWarnings = [];
+
+  const hosted = [];
+  const orderedImages = [...pkg.images].sort((a, b) => Number(b.primary) - Number(a.primary));
+  for (const image of orderedImages) {
+    if (hosted.length >= PACKAGE_DRAFT_IMAGE_CAP) {
+      extraWarnings.push(`Only ${PACKAGE_DRAFT_IMAGE_CAP} images are imported per listing; the rest were left out.`);
+      break;
+    }
+    if (!image.url) {
+      extraWarnings.push(`An uploaded image (${image.file}) was not uploaded with the package and was skipped.`);
+      continue;
+    }
+    try {
+      hosted.push({ ...image, hostedUrl: await hostPackageImage(image) });
+    } catch (error) {
+      extraWarnings.push(`An image could not be imported and was skipped: ${error.message}`);
+    }
+  }
+
+  const catalogue = await loadCatalogueForMatching();
+  const category = matchPackageCategory(pkg.identity.category.name, catalogue.categories);
+  const brand = matchPackageBrand(pkg.identity.brand, catalogue.brands);
+  // Only a clear match is applied. Anything weaker stays unresolved so the owner
+  // chooses; a package never creates a category or brand on its own.
+  const categoryId = category.confidence === "high" ? category.categoryId : null;
+  const brandId = brand.confidence === "high" ? brand.brandId : null;
+
+  const slug = await ensureUniqueSlug(buildPackageSlug([pkg.identity.brand, pkg.identity.model || pkg.titles.de || pkg.titles.en], pkg.externalId));
+  const payload = buildPackageProductPayload(pkg, {
+    categoryId,
+    brandId,
+    brandName: brand.brandName,
+    images: hosted.map((image) => ({ url: image.hostedUrl, altDe: image.altDe, altEn: image.altEn })),
+    slug,
+  });
+  if (!payload.imageUrl) payload.imageUrl = PRODUCT_IMAGE_PLACEHOLDER;
+
+  const draftWarnings = [
+    ...pkg.warnings.map((message) => ({ code: "package_note", field: "", message })),
+    ...extraWarnings.map((message) => ({ code: "package_import", field: "", message })),
+    ...doc.warnings.map((message) => ({ code: "package_validation", field: "", message })),
+  ];
+  if (!categoryId) {
+    draftWarnings.push({ code: "category_unresolved", field: "category", message: `Category "${pkg.identity.category.name || "(none given)"}" matched no existing category. Choose one when reviewing.` });
+  }
+  if (!brandId) {
+    draftWarnings.push({ code: "brand_unresolved", field: "brand", message: `Brand "${pkg.identity.brand || "(none given)"}" matched no existing brand. Choose one when reviewing.` });
+  }
+
+  const specText = pkg.specifications.map((s) => `${s.key}: ${s.value}`).join("\n");
+  const sourceText = pkg.sources.map((s) => [s.type, s.label, s.url, s.note].filter(Boolean).join(" ")).join("\n");
+
+  const product = await Product.create(payload);
+  const draft = await ProductDraft.create({
+    productId: product._id,
+    createdByAdminId: adminId,
+    origin: "package",
+    packageId: doc._id,
+    sourceUrl: pkg.sources.find((s) => s.url)?.url || "",
+    weeklyPrice: pkg.pricing.weekly || 0,
+    monthlyPrice: pkg.pricing.monthly || 0,
+    instruction: "",
+    // The package itself is the verified source. This is what lets the
+    // publication rules accept it; an empty package would not get here.
+    pastedDetails: [`Prepared product package ${pkg.externalId}.`, specText, sourceText].filter(Boolean).join("\n").slice(0, 8000),
+    taxonomyConfirmed: Boolean(categoryId && brandId),
+    status: "ready",
+    steps: {
+      extraction: { status: "skipped" },
+      text: { status: "done", completedAt: new Date() },
+      images: { status: "skipped" },
+    },
+    images: hosted.map((image) => ({
+      url: image.hostedUrl,
+      origin: image.origin === "ai_generated" ? "ai" : "user",
+      role: image.role || (image.origin === "licensed_asset" ? "licensed-asset" : image.origin === "ai_generated" ? "ai-generated" : "owner-photo"),
+      provenanceNote: [image.origin, image.license, image.note].filter(Boolean).join(" | "),
+      providerId: image.origin === "ai_generated" ? "chatgpt" : "",
+      status: "ready",
+    })),
+    warnings: draftWarnings,
+    providers: { text: { id: "chatgpt-package", model: "", real: true }, image: { id: "", model: "", real: true } },
+    provenance: {
+      extractedFacts: { productName: pkg.titles.de || pkg.titles.en, fromPackage: true },
+      sourceImages: pkg.referenceImages.map((ref) => ref.url),
+      usedStrategies: ["package"],
+    },
+  });
+
+  doc.status = "imported";
+  doc.importedProductId = product._id;
+  doc.importedDraftId = draft._id;
+  doc.importedAt = new Date();
+  await doc.save();
+  return { draftId: String(draft._id), productId: String(product._id) };
+}
+
+app.post("/api/admin/product-packages", requireAdminAuth, async (req, res) => {
+  const incoming = Array.isArray(req.body?.packages) ? req.body.packages : req.body?.package ? [req.body.package] : [];
+  if (incoming.length === 0) return res.status(400).json({ message: "Send one or more packages." });
+  if (incoming.length > PACKAGE_UPLOAD_LIMIT) {
+    return res.status(400).json({ message: `At most ${PACKAGE_UPLOAD_LIMIT} packages per upload.` });
+  }
+
+  const results = [];
+  for (const raw of incoming) {
+    const checked = validateProductPackage(raw);
+    const externalId = checked.package?.externalId || "";
+    if (!externalId) {
+      results.push({ externalId: "", status: "invalid", errors: checked.errors, warnings: checked.warnings });
+      continue;
+    }
+    const existing = await ProductPackage.findOne({ externalId });
+    if (existing?.status === "imported") {
+      results.push({
+        externalId, status: "imported", id: String(existing._id),
+        errors: ["This package was already imported. Edit the draft instead, or use a new externalId."], warnings: [],
+      });
+      continue;
+    }
+    const doc = existing || new ProductPackage({ externalId, createdByAdminId: req.admin.sub });
+    doc.title = checked.package.titles.de || checked.package.titles.en;
+    doc.rentalMode = checked.package.rentalMode;
+    doc.status = checked.ok ? "ready" : "invalid";
+    doc.problems = checked.errors;
+    doc.warnings = checked.warnings;
+    doc.payload = checked.package;
+    await doc.save();
+    results.push(summarisePackage(doc));
+  }
+  return res.status(201).json({ results });
+});
+
+app.get("/api/admin/product-packages", requireAdminAuth, async (_req, res) => {
+  const docs = await ProductPackage.find().sort({ updatedAt: -1 }).limit(200);
+  return res.json({ items: docs.map(summarisePackage) });
+});
+
+app.post("/api/admin/product-packages/import", requireAdminAuth, async (req, res) => {
+  const allReady = req.body?.allReady === true;
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter((id) => mongoose.Types.ObjectId.isValid(id)) : [];
+  if (!allReady && ids.length === 0) return res.status(400).json({ message: "Select packages to import." });
+
+  const docs = await ProductPackage.find(allReady ? { status: "ready" } : { _id: { $in: ids }, status: "ready" }).sort({ createdAt: 1 });
+  const started = Date.now();
+  const imported = [];
+  const failed = [];
+  let remaining = 0;
+
+  for (const doc of docs) {
+    // Stay under the function time limit; the client calls again for the rest.
+    if (Date.now() - started > PACKAGE_IMPORT_BUDGET_MS) {
+      remaining += 1;
+      continue;
+    }
+    try {
+      const result = await importPackage(doc, req.admin.sub);
+      imported.push({ id: String(doc._id), externalId: doc.externalId, ...result });
+    } catch (error) {
+      console.error("Package import failed:", error.message);
+      failed.push({ id: String(doc._id), externalId: doc.externalId, message: "Import failed. Nothing was published." });
+    }
+  }
+  return res.json({ imported, failed, remaining });
+});
+
+app.delete("/api/admin/product-packages/:id", requireAdminAuth, async (req, res) => {
+  const doc = await ProductPackage.findById(req.params.id);
+  if (!doc) return res.status(404).json({ message: "Package not found." });
+  if (doc.status === "imported") return res.status(409).json({ message: "An imported package stays as a record of its draft." });
+  await ProductPackage.deleteOne({ _id: doc._id });
+  return res.json({ message: "Package removed." });
+});
+
 app.post("/api/admin/product-drafts", requireAdminAuth, async (req, res) => {
   const sourceUrl = String(req.body?.sourceUrl || "").trim();
   const weeklyPrice = Number(req.body?.weeklyPrice);
@@ -4112,9 +4338,14 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
   ];
 
   const products = productIds.length
-    ? await Product.find({ _id: { $in: productIds } }).select("_id verificationRequired deliveryFee").lean()
+    ? await Product.find({ _id: { $in: productIds } }).select("_id title verificationRequired deliveryFee rentalMode occasionPricing").lean()
     : [];
   const productById = new Map(products.map((product) => [String(product._id), product]));
+
+  // Occasion (day-based) lines are priced from the product's stored options, never
+  // from the price the browser sent, and only for day counts the product offers.
+  const occasionError = applyOccasionPricing(normalizedItems, productById);
+  if (occasionError) return res.status(400).json({ message: occasionError });
 
   const itemsWithDelivery = normalizedItems.map((item) => {
     const productId = String(item.productId || "").trim();

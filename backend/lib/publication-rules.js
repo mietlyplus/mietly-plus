@@ -28,8 +28,13 @@ function evaluatePublicationBlockers({ product, draft, placeholderImage, confirm
   if (!product?.categoryId) blockers.push("A category is required.");
   if (!product?.brandId) blockers.push("A brand is required.");
   if (isPlaceholderImage(product?.imageUrl, placeholderImage)) blockers.push("At least one real image is required.");
-  if (!(Number(product?.buyerPrice) > 0)) blockers.push("A weekly rental price is required.");
-  if (!(Number(product?.monthlyBuyerPrice) > 0)) blockers.push("A monthly rental price is required.");
+  if (product?.rentalMode === "occasion") {
+    const options = (product.occasionPricing || []).filter((o) => Number(o.days) >= 1 && Number(o.days) <= 7 && Number(o.price) > 0);
+    if (options.length === 0) blockers.push("At least one day-based rental price (1-7 days) is required.");
+  } else {
+    if (!(Number(product?.buyerPrice) > 0)) blockers.push("A weekly rental price is required.");
+    if (!(Number(product?.monthlyBuyerPrice) > 0)) blockers.push("A monthly rental price is required.");
+  }
 
   let requiresSourceImageryConfirmation = false;
 

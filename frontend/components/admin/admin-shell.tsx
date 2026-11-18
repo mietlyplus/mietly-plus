@@ -42,6 +42,7 @@ export function AdminShell({ children }: AdminShellProps) {
 
   const pageTitle = useMemo(() => {
     if (pathname.startsWith("/admin/products/create-from-link")) return "Create from link";
+    if (pathname.startsWith("/admin/products/queue")) return "AI Product Queue";
     if (pathname.startsWith("/admin/products/draft")) return "Review draft";
     if (pathname === "/admin/products") return "Add Product";
     if (pathname.startsWith("/admin/products/list")) return "Product List";
@@ -134,6 +135,7 @@ export function AdminShell({ children }: AdminShellProps) {
                   {renderNavLink("List Products", "/admin/products/list")}
                   {renderNavLink("Add Product", "/admin/products")}
                   {renderNavLink("Create from Link", "/admin/products/create-from-link")}
+                  {renderNavLink("AI Product Queue", "/admin/products/queue")}
                   {renderNavLink("Bulk Import", "/admin/products/bulk")}
                 </div>
               ) : null}
@@ -185,6 +187,7 @@ export function AdminShell({ children }: AdminShellProps) {
                     {renderNavLink("List Products", "/admin/products/list")}
                     {renderNavLink("Add Product", "/admin/products")}
                     {renderNavLink("Create from Link", "/admin/products/create-from-link")}
+                  {renderNavLink("AI Product Queue", "/admin/products/queue")}
                     {renderNavLink("Bulk Import", "/admin/products/bulk")}
                   </div>
                 </div>

@@ -236,10 +236,19 @@ export default function ProductDraftReviewPage() {
             <dd className="inline break-all">{draft.sourceUrl || "—"}</dd></div>
           <div><dt className="inline text-zinc-500">Extraction: </dt>
             <dd className="inline">{draft.provenance.extractionConfidence || "—"} ({draft.provenance.usedStrategies.join(", ") || "none"})</dd></div>
-          <div><dt className="inline text-zinc-500">Weekly rent: </dt>
-            <dd className="inline font-semibold">€{draft.weeklyPrice.toFixed(2)}</dd></div>
-          <div><dt className="inline text-zinc-500">Monthly rent: </dt>
-            <dd className="inline font-semibold">€{draft.monthlyPrice.toFixed(2)}</dd></div>
+          {draft.product?.rentalMode === "occasion" ? (
+            <div className="sm:col-span-2"><dt className="inline text-zinc-500">Occasion rental (day-based): </dt>
+              <dd className="inline font-semibold">
+                {(draft.product.occasionPricing || []).map((o) => `${o.days}d €${o.price.toFixed(2)}`).join(" · ") || "no prices"}
+              </dd></div>
+          ) : (
+            <>
+              <div><dt className="inline text-zinc-500">Weekly rent: </dt>
+                <dd className="inline font-semibold">€{draft.weeklyPrice.toFixed(2)}</dd></div>
+              <div><dt className="inline text-zinc-500">Monthly rent: </dt>
+                <dd className="inline font-semibold">€{draft.monthlyPrice.toFixed(2)}</dd></div>
+            </>
+          )}
           <div className="sm:col-span-2">
             <dt className="inline text-zinc-500">Text provider: </dt>
             <dd className="inline">{draft.providers.text.id} ({draft.providers.text.real ? "real" : "FIXTURE"})</dd>

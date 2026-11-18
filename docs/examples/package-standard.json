@@ -1,0 +1,44 @@
+{
+  "schema": "leihfluss.product-package/1",
+  "externalId": "medion-md-15501",
+  "rentalMode": "standard",
+  "identity": {
+    "brand": "Medion",
+    "model": "MD 15501",
+    "series": "",
+    "sku": "",
+    "identifiers": { "ean": "4061275025026", "gtin": "", "mpn": "" },
+    "category": { "name": "Kitchen" }
+  },
+  "titles": { "de": "Medion MD 15501 4in1 Mikrowelle (25 L)", "en": "Medion MD 15501 4-in-1 Microwave (25 L)" },
+  "descriptions": {
+    "shortDe": "Mikrowelle mit Heißluftofen und Doppelgrill, 25 Liter Garraum.",
+    "shortEn": "Microwave with hot-air oven and double grill, 25 litre cavity.",
+    "longDe": "Die Medion MD 15501 vereint Mikrowelle, Heißluftofen und Doppelgrill in einem Gerät.",
+    "longEn": "The Medion MD 15501 combines microwave, hot-air oven and double grill in one appliance."
+  },
+  "specifications": [
+    { "key": "Garraum", "value": "ca. 25 L" },
+    { "key": "Mikrowellenleistung", "value": "ca. 900 W" },
+    { "key": "Gewicht", "value": "18,3 kg" }
+  ],
+  "tags": ["mikrowelle", "heißluftofen", "grill", "medion", "küche"],
+  "pricing": { "weekly": 15, "monthly": 40 },
+  "seo": {
+    "metaTitle": "Medion Mikrowelle mit Heißluft & Grill mieten | Leihfluss",
+    "metaDescription": "Medion MD 15501 4in1 Mikrowelle (25 L) wochen- oder monatsweise mieten. Lieferung in Deutschland.",
+    "keywords": ["mikrowelle mieten", "medion mikrowelle mieten"],
+    "ogTitle": "Medion MD 15501 mieten",
+    "ogDescription": "4in1 Mikrowelle mit Heißluftofen und Doppelgrill zur Miete."
+  },
+  "images": [
+    {
+      "url": "https://res.cloudinary.com/example/image/upload/medion-front.jpg",
+      "origin": "owner_photo", "role": "hero", "primary": true,
+      "altDe": "Medion MD 15501 Mikrowelle von vorn", "altEn": "Medion MD 15501 microwave, front view"
+    },
+    { "url": "https://www.medion.com/example.jpg", "origin": "reference_only", "note": "manufacturer page, reference only" }
+  ],
+  "sources": [{ "type": "url", "url": "https://www.medion.com/de/shop/p/example", "label": "Manufacturer product page" }],
+  "warnings": [{ "message": "Grill rack shown in the photo could not be confirmed." }]
+}

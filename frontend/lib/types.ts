@@ -107,6 +107,13 @@ export type Product = {
   minimumRentalDays: number;
   maximumRentalDays: number;
   rentalPeriodUnit: "day" | "week" | "month";
+  rentalMode?: "standard" | "occasion";
+  occasionPricing?: { days: number; price: number }[];
+  model?: string;
+  series?: string;
+  identifiers?: { ean: string; gtin: string; mpn: string };
+  includedItems?: { de: string; en: string; quantity: number }[];
+  imageAlts?: { de: string; en: string }[];
   deliveryFee: number;
   verificationRequired: boolean;
   depositEnabled: boolean;
