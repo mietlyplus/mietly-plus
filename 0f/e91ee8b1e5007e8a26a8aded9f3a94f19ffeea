@@ -1,0 +1,93 @@
+frontend/components/json-ld.tsx
+  s_755b8269fb6f42::t_8717c09aece175 1-4
+frontend/components/product-details-page.tsx
+  s_755b8269fb6f42::t_dd1e771bc84129 88,171-178,205-208,316-342,410,427,435-436
+  s_755b8269fb6f42::t_fc27413bb65a5a 141,277,306
+frontend/lib/types.ts
+  s_755b8269fb6f42::t_c25ebd1223d211 110-116
+frontend/app/rental/[categorySlug]/page.tsx
+  s_755b8269fb6f42::t_8717c09aece175 1-75
+frontend/next.config.ts
+  s_755b8269fb6f42::t_8717c09aece175 11-14
+frontend/app/shop/page.tsx
+  s_755b8269fb6f42::t_c25ebd1223d211 16-18
+frontend/app/admin/products/queue/page.tsx
+  s_755b8269fb6f42::t_ceb6b0f406a840 1-241
+frontend/app/shop/layout.tsx
+  s_755b8269fb6f42::t_8717c09aece175 1-13
+frontend/lib/seo.ts
+  s_755b8269fb6f42::t_8717c09aece175 1-100
+docs/examples/package-standard.json
+  s_755b8269fb6f42::t_2192cd76646176 1-44
+docs/ai-product-package.md
+  s_755b8269fb6f42::t_dd3aacd32afa52 1-62
+backend/lib/catalog-archive.js
+  s_755b8269fb6f42::t_5007b7a458dbce 1-26
+backend/lib/publication-rules.js
+  s_755b8269fb6f42::t_ad681e5ecd2297 31-37
+frontend/lib/api.ts
+  s_755b8269fb6f42::t_ceb6b0f406a840 1526-1564
+backend/models/ProductDraft.js
+  s_755b8269fb6f42::t_ad681e5ecd2297 20-21,55-57
+frontend/app/product/[slug]/page.tsx
+  s_755b8269fb6f42::t_8717c09aece175 1-12
+docs/examples/package-occasion.json
+  s_755b8269fb6f42::t_2192cd76646176 1-30
+backend/lib/occasion-pricing.js
+  s_755b8269fb6f42::t_a0dc3fdef645fe 1-57
+  s_755b8269fb6f42::t_e2ef33723bb810 58-79
+backend/index.js
+  s_755b8269fb6f42::t_7e3fcbb0eea379 980-986
+  s_755b8269fb6f42::t_ede022ca9518d0 2967
+  s_755b8269fb6f42::t_e2ef33723bb810 2893,4347-4348
+  s_755b8269fb6f42::t_ce42a08562b168 2908,3056
+  s_755b8269fb6f42::t_17b947556fa3d5 2887-2892,2894-2907,2909-2966,2968-3055,3057-3105
+  s_755b8269fb6f42::t_a0faaf1ef0c7b6 4341,4345-4346
+  s_755b8269fb6f42::t_da8782d19c209d 4349
+backend/lib/product-package.js
+  s_755b8269fb6f42::t_a0dc3fdef645fe 1-314
+frontend/app/rental/[categorySlug]/[slug]/page.tsx
+  s_755b8269fb6f42::t_8717c09aece175 1-2,4-5,7-51
+frontend/app/admin/products/draft/[id]/page.tsx
+  s_755b8269fb6f42::t_dd3aacd32afa52 239-251
+backend/scripts/archive-catalog.js
+  s_755b8269fb6f42::t_5007b7a458dbce 1-91
+backend/models/Product.js
+  s_755b8269fb6f42::t_7e3fcbb0eea379 233-256
+frontend/app/robots.ts
+  s_755b8269fb6f42::t_8717c09aece175 1-17
+frontend/components/rental-product-card.tsx
+  s_755b8269fb6f42::t_c25ebd1223d211 61-66
+backend/lib/product-package.test.js
+  s_755b8269fb6f42::t_e2ef33723bb810 62-75
+  s_755b8269fb6f42::t_2192cd76646176 1-61
+backend/models/ProductPackage.js
+  s_755b8269fb6f42::t_ad681e5ecd2297 1-11,13-24
+  s_755b8269fb6f42::t_ce42a08562b168 12
+frontend/app/sitemap.ts
+  s_755b8269fb6f42::t_8717c09aece175 1-32
+frontend/components/admin/admin-shell.tsx
+  s_755b8269fb6f42::t_ceb6b0f406a840 45,138,190
+backend/integration/product-package.test.js
+  s_755b8269fb6f42::t_f5ad2830387df4 1-88,90-124
+  s_755b8269fb6f42::t_5007b7a458dbce 125-139
+  s_755b8269fb6f42::t_5f91d909b55066 89
+frontend/app/layout.tsx
+  s_755b8269fb6f42::t_8717c09aece175 6-7,15-21,34,36-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0fe91ee8b1e5007e8a26a8aded9f3a94f19ffeea",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
