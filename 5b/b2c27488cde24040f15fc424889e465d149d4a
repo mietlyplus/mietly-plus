@@ -1,0 +1,36 @@
+frontend/lib/delivery-date.ts
+  s_755b8269fb6f42::t_a3f02a277cf71a 1-26
+backend/lib/product-package.test.js
+  s_755b8269fb6f42::t_d1e403a37b88a3 77-78,84-99,102,104-107,110-113,116-122
+  s_755b8269fb6f42::t_5e33ed240dab7d 114-115
+  s_755b8269fb6f42::t_f389a579685788 123
+frontend/components/product-details-page.tsx
+  s_755b8269fb6f42::t_0edd936bb7034a 46-50,68,70-81,91-102,239,254,261,282,293,299,313,330,364,366,381,390,392,412,431,452,458,462,466,474,479,483,486,488,498,504,514,522,535,550,555,561,569,575,585
+  s_755b8269fb6f42::t_bd6c96980cc82f 167,287
+  s_755b8269fb6f42::t_a3f02a277cf71a 11,126,177
+  s_755b8269fb6f42::t_e275dcfe5c7584 178-179
+  s_755b8269fb6f42::t_0e9e067d93ad90 238
+frontend/components/client-navbar.tsx
+  s_755b8269fb6f42::t_2df0901897df7c 21-23,38-40,360,508,520,532,568,594,603,626,640,651
+backend/lib/delivery-lead-time.js
+  s_755b8269fb6f42::t_a3f02a277cf71a 3-7,11-33,48,56-61,63,69-72
+frontend/components/rental-product-card.tsx
+  s_755b8269fb6f42::t_ca926d7054461f 81,83-84
+  s_755b8269fb6f42::t_4d8d8c42003464 27-43,86-87,96,105,128,139,143,148,164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5bb2c27488cde24040f15fc424889e465d149d4a",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
