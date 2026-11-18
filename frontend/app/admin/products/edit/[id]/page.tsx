@@ -1,5 +1,6 @@
 "use client";
 
+import { RentalTermsCard } from "@/components/admin/rental-terms-card";
 import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -11,7 +12,7 @@ import {
 } from "@/lib/api";
 import RichTextEditor from "@/components/admin/rich-text-editor";
 import CategoryCascadeSelect from "@/components/admin/category-cascade-select";
-import { Brand, Category } from "@/lib/types";
+import { Brand, Category, Product } from "@/lib/types";
 
 type ProductForm = {
   titleEn: string;
@@ -146,6 +147,7 @@ export default function AdminEditProductPage() {
   const [loadingProduct, setLoadingProduct] = useState(true);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [termsProduct, setTermsProduct] = useState<Product | null>(null);
   const buyerPriceNumber = Number(form.buyerPrice || "0");
   const offerPriceNumber = Number(form.offerPrice || "0");
   const discountPercent = calculateDiscountPercent(buyerPriceNumber, offerPriceNumber);
@@ -170,6 +172,7 @@ export default function AdminEditProductPage() {
           setError("Product not found.");
           return;
         }
+        setTermsProduct(product);
         setForm({
           titleEn: product.titleI18n?.en || product.title || "",
           titleDe: product.titleI18n?.de || "",
@@ -357,6 +360,12 @@ export default function AdminEditProductPage() {
           Back to Product List
         </button>
       </div>
+
+      {termsProduct && adminToken ? (
+        <div className="mb-4">
+          <RentalTermsCard token={adminToken} product={termsProduct} />
+        </div>
+      ) : null}
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
         <h1 className="text-2xl font-bold text-zinc-900">Edit Rental Product</h1>

@@ -73,6 +73,27 @@ const productNotesCopy = {
   },
 };
 
+const occasionCopy = {
+  en: {
+    chooseDays: "Choose how many days",
+    selected: "selected",
+    day: "day", days: "days",
+    includedTitle: "What's included",
+    occasionNote: "Occasion rental for 1 to 7 days. Each duration has its own fixed price.",
+    leadTime: (days: number, date: string) => `Delivery lead time: ${days} day${days === 1 ? "" : "s"}. Earliest start date: ${date}.`,
+    dateTooEarly: (date: string) => `Please choose a start date on or after ${date}.`,
+  },
+  de: {
+    chooseDays: "Wie viele Tage?",
+    selected: "gewählt",
+    day: "Tag", days: "Tage",
+    includedTitle: "Das ist enthalten",
+    occasionNote: "Anlass-Miete für 1 bis 7 Tage. Jede Dauer hat ihren festen Preis.",
+    leadTime: (days: number, date: string) => `Liefervorlauf: ${days} ${days === 1 ? "Tag" : "Tage"}. Frühester Mietstart: ${date}.`,
+    dateTooEarly: (date: string) => `Bitte wähle ein Startdatum ab dem ${date}.`,
+  },
+};
+
 export default function ProductDetailsPage() {
   const router = useRouter();
   const { locale } = useSiteLocale("de");
@@ -135,7 +156,12 @@ export default function ProductDetailsPage() {
 
   const images = useMemo(() => (product ? normalizeImages(product) : []), [product]);
   const durationRange = useMemo(() => (product ? getDurationRange(product, rentalMode) : null), [product, rentalMode]);
-  const minDeliveryDate = useMemo(() => toDateInputValue(addDays(new Date(), 2)), []);
+  // One lead-time field per product (standard and occasion alike); 2 is the old default.
+  const leadDays = Number.isInteger(product?.deliveryLeadDays) ? Number(product?.deliveryLeadDays) : 2;
+  const minDeliveryDate = useMemo(() => toDateInputValue(addDays(new Date(), leadDays)), [leadDays]);
+  useEffect(() => {
+    setDeliveryDate((current) => (current < minDeliveryDate ? minDeliveryDate : current));
+  }, [minDeliveryDate]);
 
   const title = product?.titleI18n?.[locale] || product?.title || "";
   const altFor = (index: number) => product?.imageAlts?.[index]?.[locale] || product?.imageAlts?.[index]?.de || (index === 0 ? title : `${title} ${index + 1}`);
@@ -194,6 +220,10 @@ export default function ProductDetailsPage() {
 
   const onAddToCart = () => {
     if (!product) return;
+    if (deliveryDate < minDeliveryDate) {
+      setCartFeedback(occasionCopy[locale].dateTooEarly(minDeliveryDate));
+      return;
+    }
     addCartItem({
       productId: product.id,
       slug: product.slug,
@@ -316,9 +346,9 @@ export default function ProductDetailsPage() {
                   {isOccasion ? (
                   <div className="mt-5">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-zinc-800">Choose how many days</p>
+                      <p className="text-sm font-semibold text-zinc-800">{occasionCopy[locale].chooseDays}</p>
                       <span className="rounded-full border border-[rgba(73,153,173,0.25)] bg-[rgba(73,153,173,0.12)] px-3 py-1 text-xs font-bold text-[rgb(47,118,135)]">
-                        {durationText(shownDuration, "day")} selected
+                        {shownDuration} {shownDuration === 1 ? occasionCopy[locale].day : occasionCopy[locale].days} {occasionCopy[locale].selected}
                       </span>
                     </div>
                     <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -333,7 +363,7 @@ export default function ProductDetailsPage() {
                               : "border-zinc-200 text-zinc-600 hover:border-[rgba(73,153,173,0.35)]"
                           }`}
                         >
-                          {durationText(option.days, "day")}
+                          {option.days} {option.days === 1 ? occasionCopy[locale].day : occasionCopy[locale].days}
                           <span className="block text-xs font-bold">EUR {formatAmount(option.price)}</span>
                         </button>
                       ))}
@@ -418,9 +448,7 @@ export default function ProductDetailsPage() {
                       onChange={(event) => setDeliveryDate(event.target.value)}
                       className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-[rgb(73,153,173)]"
                     />
-                    <p className="mt-1 text-xs text-zinc-500">
-                      Earliest available date is {minDeliveryDate} (2 days preparation time).
-                    </p>
+                    <p className="mt-1 text-xs text-zinc-500">{occasionCopy[locale].leadTime(leadDays, minDeliveryDate)}</p>
                   </div>
 
                   <div className="mt-5 border-t border-zinc-200 pt-4">
@@ -433,7 +461,7 @@ export default function ProductDetailsPage() {
                     ) : (
                       <div className="flex items-end gap-2">
                         <span className="text-4xl font-extrabold text-[rgb(47,118,135)]">EUR {formatAmount(shownPrice)}</span>
-                        <span className="pb-1 text-sm font-semibold text-zinc-700">/{durationText(shownDuration, shownUnit)}</span>
+                        <span className="pb-1 text-sm font-semibold text-zinc-700">/{isOccasion ? `${shownDuration} ${shownDuration === 1 ? occasionCopy[locale].day : occasionCopy[locale].days}` : durationText(shownDuration, shownUnit)}</span>
                       </div>
                     )}
                     {product.depositEnabled ? (
@@ -468,11 +496,25 @@ export default function ProductDetailsPage() {
                   <p className="font-semibold">{deliveryLine}</p>
                   <p className="mt-2">{productNotes.delivery}</p>
                   <p className="mt-2">{productNotes.verification}</p>
-                  <p className="mt-2">{productNotes.rentalPeriod}</p>
+                  <p className="mt-2">{isOccasion ? occasionCopy[locale].occasionNote : productNotes.rentalPeriod}</p>
                   <p className="mt-2">{productNotes.rentalUseNotice}</p>
                 </div>
               </div>
             </section>
+
+            {(product.includedItems || []).length > 0 ? (
+              <section className="mt-8 rounded-2xl border border-[rgba(73,153,173,0.24)] bg-white p-5 shadow-[0_16px_36px_-30px_rgba(73,153,173,0.55)]">
+                <h2 className="text-3xl font-extrabold text-zinc-900">{occasionCopy[locale].includedTitle}</h2>
+                <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-zinc-800">
+                  {(product.includedItems || []).map((item, index) => (
+                    <li key={`${item.de}-${index}`}>
+                      {item.quantity > 1 ? `${item.quantity} × ` : ""}
+                      {(locale === "en" ? item.en : item.de) || item.de || item.en}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
 
             <section className="mt-8 rounded-2xl border border-[rgba(73,153,173,0.24)] bg-white p-5 shadow-[0_16px_36px_-30px_rgba(73,153,173,0.55)]">
               <h2 className="text-3xl font-extrabold text-zinc-900">Product specifications</h2>
@@ -480,8 +522,8 @@ export default function ProductDetailsPage() {
                 <div className="mt-5 space-y-4">
                   {visibleSpecs.map((spec, index) => (
                     <div key={`${spec.key}-${index}`} className="grid grid-cols-[160px_1fr] gap-4 text-sm">
-                      <p className="font-bold uppercase tracking-wide text-zinc-600">{spec.key}</p>
-                      <p className="text-zinc-800">{spec.value}</p>
+                      <p className="font-bold uppercase tracking-wide text-zinc-600">{locale === "en" && spec.keyEn ? spec.keyEn : spec.key}</p>
+                      <p className="text-zinc-800">{locale === "en" && spec.valueEn ? spec.valueEn : spec.value}</p>
                     </div>
                   ))}
                   {(product.specifications || []).length > 3 ? (

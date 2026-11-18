@@ -190,6 +190,15 @@ const productSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    // Days between ordering and the earliest rental start (preparation + delivery).
+    // Applies to standard and occasion products alike. Default 2 is what the
+    // storefront always assumed, so existing products behave as before.
+    deliveryLeadDays: {
+      type: Number,
+      default: 2,
+      min: 0,
+      max: 30,
+    },
     verificationRequired: {
       type: Boolean,
       default: true,
@@ -217,6 +226,9 @@ const productSchema = new mongoose.Schema(
         {
           key: { type: String, trim: true },
           value: { type: String, trim: true },
+          // Optional English wording; the storefront falls back to key/value.
+          keyEn: { type: String, trim: true, default: "" },
+          valueEn: { type: String, trim: true, default: "" },
         },
       ],
       default: [],

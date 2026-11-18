@@ -19,7 +19,8 @@ Schema id: `leihfluss.product-package/1`. Working examples: [`docs/examples/pack
 | `titles` | `de`, `en` |
 | `descriptions` | `shortDe`, `shortEn`, `longDe`, `longEn` |
 | `includedItems[]` | `{de,en,quantity}` for bundles and party packages |
-| `specifications[]` | `{key,value}`, any number (first 80 kept) |
+| `specifications[]` | `{key,value,keyEn?,valueEn?}`, any number (first 80 kept). `key/value` is German; `keyEn/valueEn` is the optional English wording |
+| `delivery` | `{leadDays}` optional, 0-30 days before the earliest rental start (default 2) |
 | `tags[]` | strings |
 | `pricing` | standard: `{weekly, monthly}`. occasion: `{occasion:[{days,price}]}` |
 | `seo` | `metaTitle`, `metaDescription`, `keywords[]`, `canonicalUrl`, `ogTitle`, `ogDescription` |
@@ -53,10 +54,14 @@ Category and brand are matched against **existing** records, and only an exact m
 
 `rentalMode: "occasion"` stores explicit prices per day count (`1 day = 50, 2 days = 80, 3 days = 105 ...`), never a multiplied rate. The product page shows those options instead of the weekly/monthly selector; cards show "from" the lowest option. At checkout the server prices the line from the stored options and refuses a day count the product does not offer, ignoring the browser's price. Standard weekly/monthly pricing is unchanged. Occasion products are never required to have weekly or monthly prices.
 
+## After import
+
+Occasion day prices and the delivery lead time can be edited at any time from the draft review screen or the product editor (**Rental terms** card): change a price, add a day option, remove one. The server enforces days 1-7, unique days and price > 0. No re-import is needed.
+
 ## Catalog reset
 
 `backend/scripts/archive-catalog.js` hides all active products (never deletes), writes a backup first (default `~/leihfluss-backups`), asks you to type a confirmation, and can `--restore` from the backup. Dry run by default.
 
 ## Not in this release
 
-Editing occasion prices in the full product editor (use a corrected package or ask Claude), Google/Gmail integration, a direct ChatGPT-to-Leihfluss API connection, and hreflang (language is a toggle on one URL, not separate URLs).
+Google/Gmail integration, a direct ChatGPT-to-Leihfluss API connection, and hreflang (language is a toggle on one URL, not separate URLs).

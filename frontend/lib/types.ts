@@ -108,6 +108,7 @@ export type Product = {
   maximumRentalDays: number;
   rentalPeriodUnit: "day" | "week" | "month";
   rentalMode?: "standard" | "occasion";
+  deliveryLeadDays?: number;
   occasionPricing?: { days: number; price: number }[];
   model?: string;
   series?: string;
@@ -120,7 +121,7 @@ export type Product = {
   securityDeposit: number;
   replacementValue: number;
   refundable: boolean;
-  specifications: Array<{ key: string; value: string }>;
+  specifications: Array<{ key: string; value: string; keyEn?: string; valueEn?: string }>;
   seo: {
     metaTitle?: string;
     metaDescription?: string;

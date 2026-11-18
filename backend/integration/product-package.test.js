@@ -137,3 +137,61 @@ test("catalog archive hides active products without deleting, leaves drafts alon
   await restoreFromBackup(Product, { activeProductIds: result.ids });
   assert.equal(await Product.countDocuments({ isActive: true }), activeBefore);
 });
+
+test("occasion prices can be changed, added and removed after import, with server-side validation", async () => {
+  const castle = await Product.findOne({ rentalMode: "occasion" });
+  const patch = (id, body) => call(`/api/admin/products/${id}/rental-terms`, { method: "PATCH", body: JSON.stringify(body) });
+
+  const changed = await patch(castle._id, { occasionPricing: [{ days: 1, price: 60 }, { days: 2, price: 90 }, { days: 5, price: 140 }] });
+  assert.equal(changed.status, 200);
+  assert.deepEqual(changed.body.occasionPricing, [{ days: 1, price: 60 }, { days: 2, price: 90 }, { days: 5, price: 140 }]);
+  assert.equal((await Product.findById(castle._id)).occasionPricing.length, 3, "removed options are really gone");
+
+  for (const bad of [
+    [{ days: 8, price: 10 }], [{ days: 0, price: 10 }], [{ days: 2, price: 0 }], [{ days: 2, price: -5 }],
+    [{ days: 2, price: 10 }, { days: 2, price: 12 }], [],
+  ]) {
+    assert.equal((await patch(castle._id, { occasionPricing: bad })).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await Product.findById(castle._id)).occasionPricing.length, 3, "a rejected edit changes nothing");
+
+  const standard = await Product.findOne({ rentalMode: "standard" });
+  assert.equal((await patch(standard._id, { occasionPricing: [{ days: 1, price: 5 }] })).status, 400, "standard products take no day prices");
+  const before = [standard.buyerPrice, standard.monthlyBuyerPrice];
+
+  assert.equal((await patch(standard._id, { deliveryLeadDays: 4 })).body.deliveryLeadDays, 4, "lead time works for standard products");
+  assert.equal((await patch(castle._id, { deliveryLeadDays: 1 })).body.deliveryLeadDays, 1, "and for occasion products");
+  assert.equal((await patch(castle._id, { deliveryLeadDays: 99 })).status, 400);
+  const after = await Product.findById(standard._id);
+  assert.deepEqual([after.buyerPrice, after.monthlyBuyerPrice], before, "weekly/monthly prices untouched");
+});
+
+test("a failed import leaves no orphan product or draft and the package stays ready", async () => {
+  const pkg = example("package-standard.json");
+  pkg.externalId = "rollback-case";
+  pkg.titles = { de: "Rollback Testgerät", en: "Rollback test device" };
+  pkg.identity.model = "RB-1";
+  pkg.images = [{ url: HOSTED, origin: "owner_photo", altDe: "x", primary: true }];
+  await post("/api/admin/product-packages", { packages: [pkg] });
+
+  const ProductDraft = require(path.join(ROOT, "models/ProductDraft"));
+  const originalCreate = ProductDraft.create;
+  const products = await Product.countDocuments({});
+  const drafts = await ProductDraft.countDocuments({});
+  ProductDraft.create = async () => { throw new Error("simulated database failure"); };
+  let result;
+  try {
+    result = await post("/api/admin/product-packages/import", { allReady: true });
+  } finally {
+    ProductDraft.create = originalCreate;
+  }
+  assert.equal(result.body.imported.length, 0);
+  assert.equal(result.body.failed.length, 1);
+  assert.equal(await Product.countDocuments({}), products, "no orphan product");
+  assert.equal(await ProductDraft.countDocuments({}), drafts);
+  const list = await call("/api/admin/product-packages");
+  assert.equal(list.body.items.find((i) => i.externalId === "rollback-case").status, "ready");
+
+  const retry = await post("/api/admin/product-packages/import", { allReady: true });
+  assert.equal(retry.body.imported.length, 1, "retry succeeds once the fault is gone");
+});

@@ -127,7 +127,7 @@ export function RentalProductCard({
 
             <div className="space-y-0.5 md:space-y-1">
               <p className="text-lg font-extrabold leading-none text-[rgb(60,138,158)] md:text-xl">
-                Rent EUR {formatAmount(effectivePrice)} {priceUnit}
+                Rent {isOccasion ? (locale === "de" ? "ab " : "from ") : ""}EUR {formatAmount(effectivePrice)} {priceUnit}
               </p>
               {hasOffer ? (
                 <p className="text-xs text-zinc-400 line-through md:text-sm">EUR {formatAmount(effectiveBuyerPrice)}</p>

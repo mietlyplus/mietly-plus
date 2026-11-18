@@ -1562,3 +1562,15 @@ export function importProductPackages(adminToken: string, body: { ids?: string[]
 export function deleteProductPackage(adminToken: string, id: string) {
   return adminJson<{ message: string }>(`/api/admin/product-packages/${encodeURIComponent(id)}`, adminToken, { method: "DELETE" });
 }
+
+export function updateRentalTerms(
+  adminToken: string,
+  productId: string,
+  body: { occasionPricing?: { days: number; price: number }[]; deliveryLeadDays?: number }
+) {
+  return adminJson<{ rentalMode: "standard" | "occasion"; occasionPricing: { days: number; price: number }[]; deliveryLeadDays: number }>(
+    `/api/admin/products/${encodeURIComponent(productId)}/rental-terms`,
+    adminToken,
+    { method: "PATCH", body: JSON.stringify(body) }
+  );
+}

@@ -53,7 +53,7 @@ function ShopPageContent() {
 
   useEffect(() => {
     fetchPublicProducts()
-      .then((data) => setProducts(data))
+      .then((data) => setProducts(data.filter((product) => product.rentalMode !== "occasion")))
       .catch(() => setError("Could not load products."));
 
     fetchCategoryTree().then(setCategories).catch((error) => {

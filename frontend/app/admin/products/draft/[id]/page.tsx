@@ -1,5 +1,6 @@
 "use client";
 
+import { RentalTermsCard } from "@/components/admin/rental-terms-card";
 import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -462,6 +463,15 @@ export default function ProductDraftReviewPage() {
           Regenerating one image leaves the listing text and the other images untouched.
         </p>
       </div>
+
+      {product ? (
+        <RentalTermsCard
+          key={`${product.id}-${product.deliveryLeadDays}-${JSON.stringify(product.occasionPricing)}`}
+          token={token}
+          product={product}
+          onSaved={() => void load(token)}
+        />
+      ) : null}
 
       {product ? (
         <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm">

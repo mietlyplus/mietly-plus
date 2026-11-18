@@ -73,3 +73,20 @@ test("occasion checkout lines are re-priced from stored options and unsupported 
   assert.equal(applyOccasionPricing([standard], new Map([["p2", { rentalMode: "standard" }]])), null);
   assert.equal(standard.unitPrice, 9, "standard pricing is untouched");
 });
+
+test("delivery lead time: valid range, per-product start-date check with timezone tolerance", () => {
+  const { parseDeliveryLeadDays, checkStartDates } = require("./delivery-lead-time");
+  assert.equal(parseDeliveryLeadDays(0), 0);
+  assert.equal(parseDeliveryLeadDays("5"), 5);
+  assert.equal(parseDeliveryLeadDays(31), null);
+  assert.equal(parseDeliveryLeadDays(1.5), null);
+  assert.equal(parseDeliveryLeadDays(-1), null);
+  const now = new Date("2026-11-20T12:00:00Z");
+  const products = new Map([["a", { title: "A", deliveryLeadDays: 3 }], ["b", { title: "B" }]]);
+  const line = (productId, startDate) => ({ productId, startDate });
+  assert.equal(checkStartDates([line("a", "2026-11-23")], products, now), null, "today + 3 is allowed");
+  assert.match(checkStartDates([line("a", "2026-11-21")], products, now), /3 day/);
+  assert.equal(checkStartDates([line("b", "2026-11-22")], products, now), null, "unset lead time defaults to 2");
+  assert.match(checkStartDates([line("b", "2026-11-20")], products, now), /2 day/);
+  assert.equal(checkStartDates([line("zz", "2026-01-01"), { productId: "a" }], products, now), null, "unknown product / no date left to other checks");
+});

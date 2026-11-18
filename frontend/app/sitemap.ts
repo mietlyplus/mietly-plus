@@ -10,7 +10,7 @@ function flatten(categories: Category[]): Category[] {
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const [products, categories] = await Promise.all([getProductsForSeo(), fetchCategoryTree()]);
-  const staticPages = ["", "/shop", "/how-it-works", "/help-center", "/blog"].map((path) => ({
+  const staticPages = ["", "/shop", "/occasions", "/how-it-works", "/help-center", "/blog"].map((path) => ({
     url: `${SITE_URL}${path}`,
     changeFrequency: "weekly" as const,
     priority: path === "" ? 1 : 0.6,

@@ -13,7 +13,8 @@
 //   titles          { de, en }
 //   descriptions    { shortDe, shortEn, longDe, longEn }
 //   includedItems   [{ de, en, quantity }]            bundles / party packages
-//   specifications  [{ key, value, group? }]          any number
+//   specifications  [{ key, value, keyEn?, valueEn? }] any number; keyEn/valueEn = English wording
+//   delivery        { leadDays }                      optional, 0-30 (default 2)
 //   tags            [string]
 //   pricing         { weekly, monthly }               standard only
 //                   { occasion: [{ days, price }] }   occasion only (days 1-7, explicit prices)
@@ -113,9 +114,17 @@ function validateProductPackage(input) {
       warnings.push(`Specification ${index + 1} was skipped because it has no key or no value.`);
       return;
     }
-    specifications.push({ key, value });
+    specifications.push({ key, value, keyEn: text(spec?.keyEn, 120), valueEn: text(spec?.valueEn, 400) });
   });
   if (list(input.specifications).length > MAX_SPECS) warnings.push(`Only the first ${MAX_SPECS} specifications are kept.`);
+
+  // --- delivery lead time (optional; the product default is 2 days) ---
+  let leadDays = null;
+  if (input.delivery?.leadDays !== undefined) {
+    const parsed = Number(input.delivery.leadDays);
+    if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 30) leadDays = parsed;
+    else warnings.push("delivery.leadDays must be a whole number from 0 to 30 and was ignored.");
+  }
 
   // --- pricing ---
   let weekly = 0;
@@ -211,6 +220,7 @@ function validateProductPackage(input) {
     includedItems,
     specifications,
     tags: list(input.tags).map((tag) => text(tag, 60)).filter(Boolean).slice(0, 30),
+    delivery: { leadDays },
     pricing: rentalMode === "occasion" ? { occasion: occasionOptions } : { weekly, monthly },
     seo: {
       metaTitle: text(seoIn.metaTitle, 120),
@@ -298,6 +308,7 @@ function buildPackageProductPayload(pkg, { categoryId, brandId, brandName, image
     maximumRentalDays: occasion ? MAX_OCCASION_DAYS : 30,
     rentalPeriodUnit: occasion ? "day" : "week",
     deliveryFee: 0,
+    ...(pkg.delivery?.leadDays !== null && pkg.delivery?.leadDays !== undefined ? { deliveryLeadDays: pkg.delivery.leadDays } : {}),
     verificationRequired: true,
     depositEnabled: false,
     securityDeposit: 0,

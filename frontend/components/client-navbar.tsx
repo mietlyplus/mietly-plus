@@ -17,6 +17,7 @@ const copy = {
     promo: "LIMITED-TIME MEGA DEAL: Up to 40% OFF Premium Tech Rentals",
     search: "Search for products...",
     allCategories: "All categories",
+    occasions: "Occasions",
     welcome: "Welcome",
     signUp: "Sign up",
     logIn: "Log in",
@@ -30,6 +31,7 @@ const copy = {
     promo: "MEGA-ANGEBOT NUR KURZ: Bis zu 40% Rabatt auf Premium-Tech-Mieten",
     search: "Suche nach Produkten...",
     allCategories: "Alle Kategorien",
+    occasions: "Anlässe",
     welcome: "Willkommen",
     signUp: "Registrieren",
     logIn: "Einloggen",
@@ -112,6 +114,16 @@ function HomeIcon() {
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M3 10.5 12 3l9 7.5" />
       <path d="M5 10v10h14V10" />
+    </svg>
+  );
+}
+
+function OccasionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="9" width="18" height="11" rx="1" />
+      <path d="M12 9v11M3 13h18" />
+      <path d="M12 9c-2.5 0-4-1-4-2.5S9.5 4 12 9zM12 9c2.5 0 4-1 4-2.5S14.5 4 12 9z" />
     </svg>
   );
 }
@@ -525,6 +537,9 @@ export function ClientNavbar() {
           <Link href="/shop" className="whitespace-nowrap rounded-md px-2 py-1.5 transition hover:bg-white/15 hover:text-white">
             {copy[locale].allCategories}
           </Link>
+          <Link href="/occasions" className="whitespace-nowrap rounded-md px-2 py-1.5 font-bold transition hover:bg-white/15 hover:text-white">
+            {copy[locale].occasions}
+          </Link>
           {topCategories.map((category) => (
             <NavCategoryItem key={category.id} category={category} locale={locale} />
           ))}
@@ -562,7 +577,7 @@ export function ClientNavbar() {
       ) : null}
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[rgba(73,153,173,0.22)] bg-white/95 backdrop-blur lg:hidden">
-        <div className="grid grid-cols-5 px-1 py-1">
+        <div className="grid grid-cols-6 px-1 py-1">
           <Link
             href="/"
             className={`flex flex-col items-center gap-1 rounded-md px-2 py-1 text-[11px] ${
@@ -580,6 +595,15 @@ export function ClientNavbar() {
           >
             <ShopIcon />
             <span>Shop</span>
+          </Link>
+          <Link
+            href="/occasions"
+            className={`flex flex-col items-center gap-1 rounded-md px-2 py-1 text-[11px] ${
+              pathname.startsWith("/occasions") ? "text-[rgb(73,153,173)]" : "text-zinc-600"
+            }`}
+          >
+            <OccasionIcon />
+            <span>{copy[locale].occasions}</span>
           </Link>
           <Link
             href="/cart"

@@ -970,6 +970,7 @@ function mapProduct(product) {
     maximumRentalDays: maxDays,
     rentalPeriodUnit: product.rentalPeriodUnit || "week",
     deliveryFee: product.deliveryFee || 0,
+    deliveryLeadDays: Number.isInteger(product.deliveryLeadDays) ? product.deliveryLeadDays : 2,
     verificationRequired: product.verificationRequired !== false,
     depositEnabled: Boolean(product.depositEnabled),
     securityDeposit: product.securityDeposit || 0,
@@ -2064,6 +2065,7 @@ app.post("/api/admin/products", requireAdminAuth, async (req, res) => {
     maximumRentalDays = 30,
     rentalPeriodUnit = "week",
     deliveryFee = 0,
+    deliveryLeadDays: createLeadDays,
     verificationRequired = true,
     depositEnabled = false,
     securityDeposit = 0,
@@ -2161,6 +2163,8 @@ app.post("/api/admin/products", requireAdminAuth, async (req, res) => {
       ? String(rentalPeriodUnit)
       : "week",
     deliveryFee: Math.max(0, Number(deliveryFee) || 0),
+    ...(parseDeliveryLeadDays(createLeadDays) !== null ? { deliveryLeadDays: parseDeliveryLeadDays(createLeadDays) } : {}),
+    
     verificationRequired: Boolean(verificationRequired),
     depositEnabled: Boolean(depositEnabled),
     securityDeposit: Boolean(depositEnabled) ? Number(securityDeposit) || 0 : 0,
@@ -2193,6 +2197,34 @@ app.post("/api/admin/products", requireAdminAuth, async (req, res) => {
     .populate("categoryId", "name slug")
     .populate("brandId", "name slug image");
   return res.status(201).json(mapProduct(populated));
+});
+
+// Rental terms the owner can change without re-importing anything: the day-based
+// prices of an occasion product and the delivery lead time of any product.
+app.patch("/api/admin/products/:id/rental-terms", requireAdminAuth, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ message: "Product not found." });
+  const product = await Product.findById(req.params.id);
+  if (!product) return res.status(404).json({ message: "Product not found." });
+
+  if (req.body?.occasionPricing !== undefined) {
+    if (product.rentalMode !== "occasion") {
+      return res.status(400).json({ message: "Day-based prices apply to occasion products only." });
+    }
+    const checked = normalizeOccasionOptions(req.body.occasionPricing);
+    if (checked.errors.length) return res.status(400).json({ message: checked.errors[0], errors: checked.errors });
+    product.occasionPricing = checked.options;
+  }
+  if (req.body?.deliveryLeadDays !== undefined) {
+    const days = parseDeliveryLeadDays(req.body.deliveryLeadDays);
+    if (days === null) return res.status(400).json({ message: "deliveryLeadDays must be a whole number from 0 to 30." });
+    product.deliveryLeadDays = days;
+  }
+  await product.save();
+  return res.json({
+    rentalMode: product.rentalMode,
+    occasionPricing: (product.occasionPricing || []).map((o) => ({ days: o.days, price: o.price })),
+    deliveryLeadDays: product.deliveryLeadDays,
+  });
 });
 
 app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
@@ -2236,6 +2268,9 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
     maximumRentalDays = 30,
     rentalPeriodUnit = "week",
     deliveryFee = 0,
+    deliveryLeadDays,
+    rentalMode,
+    occasionPricing,
     verificationRequired = true,
     depositEnabled = false,
     securityDeposit = 0,
@@ -2251,6 +2286,26 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
     return res.status(400).json({
       message: "title (or titleI18n.en), slug, imageUrl, categoryId, brandId, monthlyPrice are required.",
     });
+  }
+
+  // Rental mode, day prices and lead time are optional here: the standard editor
+  // does not send them, and then they are left exactly as they are.
+  const nextRentalMode = rentalMode === undefined ? product.rentalMode || "standard" : String(rentalMode);
+  if (!["standard", "occasion"].includes(nextRentalMode)) {
+    return res.status(400).json({ message: "rentalMode must be standard or occasion." });
+  }
+  let nextOccasionPricing = null;
+  if (occasionPricing !== undefined) {
+    const checked = normalizeOccasionOptions(occasionPricing);
+    if (nextRentalMode === "occasion" && checked.errors.length) {
+      return res.status(400).json({ message: checked.errors[0], errors: checked.errors });
+    }
+    nextOccasionPricing = nextRentalMode === "occasion" ? checked.options : [];
+  }
+  let nextLeadDays = null;
+  if (deliveryLeadDays !== undefined) {
+    nextLeadDays = parseDeliveryLeadDays(deliveryLeadDays);
+    if (nextLeadDays === null) return res.status(400).json({ message: "deliveryLeadDays must be a whole number from 0 to 30." });
   }
 
   const minimumRentalMonthsValue = toPositiveNumber(minimumRentalMonths, 1);
@@ -2334,17 +2389,29 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
     ? String(rentalPeriodUnit)
     : "week";
   product.deliveryFee = Math.max(0, Number(deliveryFee) || 0);
+  if (nextLeadDays !== null) product.deliveryLeadDays = nextLeadDays;
+  product.rentalMode = nextRentalMode;
+  if (nextOccasionPricing !== null) product.occasionPricing = nextOccasionPricing;
   product.verificationRequired = Boolean(verificationRequired);
   product.depositEnabled = Boolean(depositEnabled);
   product.securityDeposit = Boolean(depositEnabled) ? Number(securityDeposit) || 0 : 0;
   product.replacementValue = Number(replacementValue) || 0;
   product.refundable = Boolean(refundable);
+  // English wording of a specification survives an edit from a form that only
+  // knows the main key/value: it is kept when the incoming row has none.
+  const existingSpecs = new Map((product.specifications || []).map((spec) => [spec.key, spec]));
   product.specifications = Array.isArray(specifications)
     ? specifications
-        .map((spec) => ({
-          key: String(spec?.key || "").trim(),
-          value: String(spec?.value || "").trim(),
-        }))
+        .map((spec) => {
+          const key = String(spec?.key || "").trim();
+          const previous = existingSpecs.get(key);
+          return {
+            key,
+            value: String(spec?.value || "").trim(),
+            keyEn: String(spec?.keyEn ?? previous?.keyEn ?? "").trim(),
+            valueEn: String(spec?.valueEn ?? previous?.valueEn ?? "").trim(),
+          };
+        })
         .filter((spec) => spec.key && spec.value)
     : [];
   product.seo = {
@@ -2366,6 +2433,12 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
   // Manual and CSV products have no draft and are unaffected.
   const wasActive = product.isActive === true;
   const wantsActive = Boolean(isActive);
+  if (nextRentalMode === "occasion" && wantsActive) {
+    const effective = nextOccasionPricing ?? product.occasionPricing ?? [];
+    if (effective.length === 0) {
+      return res.status(400).json({ message: "An occasion product needs at least one day-based price (1-7 days) to be active." });
+    }
+  }
 
   if (!wasActive && wantsActive) {
     const linkedDraft = await ProductDraft.findOne({ productId: product._id, status: { $ne: "discarded" } });
@@ -2890,7 +2963,8 @@ app.get("/api/admin/product-drafts/:id", requireAdminAuth, async (req, res) => {
 // goes through the same review and explicit publication as every other draft.
 // ---------------------------------------------------------------------------
 const ProductPackage = require("./models/ProductPackage");
-const { applyOccasionPricing } = require("./lib/occasion-pricing");
+const { applyOccasionPricing, normalizeOccasionOptions } = require("./lib/occasion-pricing");
+const { parseDeliveryLeadDays, checkStartDates } = require("./lib/delivery-lead-time");
 const { validateProductPackage, buildPackageProductPayload } = require("./lib/product-package");
 const { buildSlug: buildPackageSlug, matchCategory: matchPackageCategory, matchBrand: matchPackageBrand } = require("./lib/product-payload");
 
@@ -2981,8 +3055,11 @@ async function importPackage(doc, adminId) {
   const specText = pkg.specifications.map((s) => `${s.key}: ${s.value}`).join("\n");
   const sourceText = pkg.sources.map((s) => [s.type, s.label, s.url, s.note].filter(Boolean).join(" ")).join("\n");
 
-  const product = await Product.create(payload);
-  const draft = await ProductDraft.create({
+  let product = null;
+  let draft = null;
+  try {
+  product = await Product.create(payload);
+  draft = await ProductDraft.create({
     productId: product._id,
     createdByAdminId: adminId,
     origin: "package",
@@ -3023,6 +3100,13 @@ async function importPackage(doc, adminId) {
   doc.importedDraftId = draft._id;
   doc.importedAt = new Date();
   await doc.save();
+  } catch (error) {
+    // No orphan: whatever was created for this attempt is removed again, and the
+    // package stays READY so it can be retried.
+    if (draft) await ProductDraft.deleteOne({ _id: draft._id }).catch(() => {});
+    if (product) await Product.deleteOne({ _id: product._id }).catch(() => {});
+    throw error;
+  }
   return { draftId: String(draft._id), productId: String(product._id) };
 }
 
@@ -4338,7 +4422,7 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
   ];
 
   const products = productIds.length
-    ? await Product.find({ _id: { $in: productIds } }).select("_id title verificationRequired deliveryFee rentalMode occasionPricing").lean()
+    ? await Product.find({ _id: { $in: productIds } }).select("_id title verificationRequired deliveryFee deliveryLeadDays rentalMode occasionPricing").lean()
     : [];
   const productById = new Map(products.map((product) => [String(product._id), product]));
 
@@ -4346,6 +4430,9 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
   // from the price the browser sent, and only for day counts the product offers.
   const occasionError = applyOccasionPricing(normalizedItems, productById);
   if (occasionError) return res.status(400).json({ message: occasionError });
+  // The start date must respect each product's delivery lead time.
+  const leadTimeError = checkStartDates(normalizedItems, productById);
+  if (leadTimeError) return res.status(400).json({ message: leadTimeError });
 
   const itemsWithDelivery = normalizedItems.map((item) => {
     const productId = String(item.productId || "").trim();
