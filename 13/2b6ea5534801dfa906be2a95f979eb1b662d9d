@@ -1,0 +1,113 @@
+frontend/components/home-heading.tsx
+  s_755b8269fb6f42::t_7c217eb0f48c8d 1-26
+backend/models/Order.js
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 186,193-195
+  s_755b8269fb6f42::t_7ddb62e1b6edb8 196
+backend/lib/delivery-lead-time.js
+  s_755b8269fb6f42::t_1a928ac2c0f03e 48,51-64,69-70,77
+frontend/components/home-benefits-strip.tsx
+  s_755b8269fb6f42::t_a0727eda1ad124 1-12,15,26,35,44,73
+frontend/components/category-landing-content.tsx
+  s_755b8269fb6f42::t_5086a66c8247ce 1-71
+frontend/app/layout.tsx
+  s_755b8269fb6f42::t_7c217eb0f48c8d 7,46
+frontend/components/locale-html-sync.tsx
+  s_755b8269fb6f42::t_7c217eb0f48c8d 1-13
+frontend/lib/rental-copy.ts
+  s_755b8269fb6f42::t_1baf40ee2881a5 1-51
+frontend/components/rental-product-card.tsx
+  s_755b8269fb6f42::t_ef0e87ad902bf7 29,33,36,87,98-103,156
+backend/webhook-order-match.test.js
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 1-155
+backend/lib/pricing.test.js
+  s_755b8269fb6f42::t_9c102969886767 319-380
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 1-318
+backend/lib/pricing.js
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 1-11,20-142,154-189,192-260,322-340,342-352
+  s_755b8269fb6f42::t_1a928ac2c0f03e 12-19,143-153,190-191,261-321,341
+backend/checkout-precondition.test.js
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 1-145,147-154,156-335
+  s_755b8269fb6f42::t_638fb2fedfcc27 146,155
+backend/.env.example
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 23-83
+backend/lib/occasion-pricing.js
+  s_755b8269fb6f42::t_1a928ac2c0f03e 58
+frontend/components/home-banner-section.tsx
+  s_755b8269fb6f42::t_7c217eb0f48c8d 1,6-11,29-30,96,109,111,122,130,132,139
+frontend/lib/api.ts
+  s_755b8269fb6f42::t_64ac9731e9b565 8
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 1204-1245,1249-1250,1252-1253,1255-1257,1259-1262,1286-1293,1297-1307
+frontend/lib/types.ts
+  s_755b8269fb6f42::t_18cbbe3495e189 258-259,262
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 274-276,383-388,391-435
+  s_755b8269fb6f42::t_fdcbcedfdad3f5 382,389-390
+frontend/components/home-rent-now-cta.tsx
+  s_755b8269fb6f42::t_a0727eda1ad124 1-19,22-23,29,31,34,42,49
+frontend/components/home-random-picks.tsx
+  s_755b8269fb6f42::t_10ad3b037e43bd 1,9,20-24,26,72-73,81,91,119
+frontend/lib/cart.ts
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 30-47,63,65-69,74,89-93,97-116
+  s_755b8269fb6f42::t_e5fb5c8c8e1f9f 117
+frontend/app/checkout/page.tsx
+  s_755b8269fb6f42::t_17352d2c95055d 813-814
+  s_755b8269fb6f42::t_1fb53308f33014 705,768,776
+  s_755b8269fb6f42::t_05caad217b46ce 3-4,43-57,59-67,75-108,123-124,182,251,294-296,299-300,302,320,354,357,372,379,381,390,394,398,402,406,432,439,444,494,499,513-514,527,548,556,564,572,580,588,596,604,612,637,639,642,647,655,669,678,681-682,688,695,702,709,728,730-731,738,740,744,749,770,774,785,789,793,797,819
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 12,15,20-21,131-136,214-250,252-268,270-274,277-289,391-393,395-397,414,417-421,423,435-438,440-443,684-687,689-694,696-701,703-704,706-708,710-713,717-724,727,729,743,745-748,750-758,760-767,769,771-773,775,777-780
+  s_755b8269fb6f42::t_2bab72e101a9cb 58,68-74
+frontend/app/rental/[categorySlug]/page.tsx
+  s_755b8269fb6f42::t_5086a66c8247ce 3,47,49-50
+backend/index.js
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 26-27,34-35,94-101,117-139,149,162,168-169,198-199,207,1327-1328,4044-4045,4116-4117,4153-4154,4316,4375-4398,4402-4523,4534-4602,4619-4622,4645-4651,4653-4661,4664-4666,4668,4675-4736,4748-4749,4770-4773,4814-4819,4823-5150,5175-5183,5185,5189,5292-5301,5328-5333
+  s_755b8269fb6f42::t_90c7ac311a5449 253-260,4313-4315
+  s_755b8269fb6f42::t_1a928ac2c0f03e 3008-3009,4399-4401,4524-4533
+  s_755b8269fb6f42::t_6a5b3a1085ef70 178
+backend/webhook-claim-recovery.test.js
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 1-152
+frontend/components/product-details-page.tsx
+  s_755b8269fb6f42::t_324cdd25af1b3d 223,226-227
+  s_755b8269fb6f42::t_c73efcf0285f88 396
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 263
+  s_755b8269fb6f42::t_18cbbe3495e189 248,251
+frontend/components/home-categories-section.tsx
+  s_755b8269fb6f42::t_a0727eda1ad124 1,69-70,80,92,99,110,119
+  s_755b8269fb6f42::t_10ad3b037e43bd 6-11,14
+frontend/app/page.tsx
+  s_755b8269fb6f42::t_7c217eb0f48c8d 12,18
+backend/models/StripeWebhookEvent.js
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 1-50
+frontend/app/cart/page.tsx
+  s_755b8269fb6f42::t_18cbbe3495e189 19-43,53-54,146-147,155,162,168,171,179,181,191,197-198,204,211,214,217,220,224,235,242,247,250-252,264,267,271,275,281,289
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 7-16,18,56,65-113,117,126,130-138,160-161,163-167,169-170,172-176,187-190,192-196,199-200,228,234,236,248-249,253-254,259-260
+frontend/components/home-popular-products.tsx
+  s_755b8269fb6f42::t_10ad3b037e43bd 1,9-14,17,60-61,69,79,106-107
+frontend/app/shop/page.tsx
+  s_755b8269fb6f42::t_4b153255293131 85,354,416,590
+  s_755b8269fb6f42::t_06f8183877e25d 640,645
+  s_755b8269fb6f42::t_f90f574ae2b539 11,16-40,79-80,193-196,198,239,241,255,268,272,277,283,293,308,337,350,370,374,378,382,392,399-400,408,411,436,444,462,468,475,477,491,504,508,513,519,529,544,573,586,606,610,614,618,628
+backend/payments.test.js
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 1-92
+backend/package.json
+  s_755b8269fb6f42::t_3ce25c527a62af 7
+backend/checkout-quote.test.js
+  s_755b8269fb6f42::t_884a1927766974 260
+  s_755b8269fb6f42::t_21f9a919e23ce0 234-236,238-259,261-306,308,310-311
+  s_755b8269fb6f42::t_70f91b8e414b45 237,307,309
+  s_755b8269fb6f42::t_f1f7aa36e5ff06 1-116,118-233
+  s_755b8269fb6f42::t_638fb2fedfcc27 117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "132b6ea5534801dfa906be2a95f979eb1b662d9d",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
