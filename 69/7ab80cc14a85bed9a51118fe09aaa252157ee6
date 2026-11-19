@@ -1,0 +1,22 @@
+backend/index.js
+  s_755b8269fb6f42::t_47582c006a23af 5444-5448,5464-5469
+  s_755b8269fb6f42::t_164d0ff451b71b 5470
+backend/recurring-webhook.test.js
+  s_755b8269fb6f42::t_47582c006a23af 334-385
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "697ab80cc14a85bed9a51118fe09aaa252157ee6",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
