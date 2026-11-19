@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test \"lib/**/*.test.js\"",
+    "test": "node --test \"lib/**/*.test.js\" \"*.test.js\"",
     "test:integration": "node --test \"integration/**/*.test.js\"",
     "start": "node index.js",
     "dev": "node --watch index.js",

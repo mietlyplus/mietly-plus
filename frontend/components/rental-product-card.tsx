@@ -24,6 +24,23 @@ function formatAmount(value: number) {
   }).format(value);
 }
 
+const cardCopy = {
+  en: {
+    available: "Available", off: (n: number) => `${n}% Off`,
+    fallbackDescription: "Flexible rental with trusted quality checks.",
+    category: "Category", general: "General", rent: "Rent", from: "from ",
+    week: "week", month: "month", day: "day", days: "days",
+    vat: "*Incl. VAT", rentNow: "Rent it Now", wishlist: "wishlist",
+  },
+  de: {
+    available: "Verfügbar", off: (n: number) => `${n}% Rabatt`,
+    fallbackDescription: "Flexibel mieten mit geprüfter Qualität.",
+    category: "Kategorie", general: "Allgemein", rent: "Miete", from: "ab ",
+    week: "Woche", month: "Monat", day: "Tag", days: "Tage",
+    vat: "*inkl. MwSt.", rentNow: "Jetzt mieten", wishlist: "Wunschliste",
+  },
+};
+
 export function RentalProductCard({
   product,
   className = "",
@@ -47,7 +64,6 @@ export function RentalProductCard({
   const effectiveOfferPrice = useMonthly ? monthlyOfferPrice : offerPrice;
   const hasOffer = useMonthly ? monthlyHasOffer : hasWeeklyOffer;
   const discountPercent = hasOffer ? Math.round(((effectiveBuyerPrice - effectiveOfferPrice) / effectiveBuyerPrice) * 100) : 0;
-  const shortDescription = stripHtml(product.shortDescriptionI18n?.en || product.shortDescription || "");
 
   let effectivePrice: number;
   if (hasOffer) {
@@ -58,10 +74,22 @@ export function RentalProductCard({
     effectivePrice = effectiveBuyerPrice > 0 ? effectiveBuyerPrice : 0;
   }
 
-  const priceUnit = useMonthly ? "/ month" : "/ week";
+  const occasionOptions = product.rentalMode === "occasion" ? [...(product.occasionPricing || [])].sort((a, b) => a.price - b.price) : [];
+  const isOccasion = occasionOptions.length > 0;
+  if (isOccasion) effectivePrice = occasionOptions[0].price;
+  const t = cardCopy[locale];
+  // The visitor's language first; the single legacy text, then the other
+  // language, only when that one is empty.
+  const otherLocale = locale === "de" ? "en" : "de";
+  const shortDescription = stripHtml(
+    product.shortDescriptionI18n?.[locale] || product.shortDescription || product.shortDescriptionI18n?.[otherLocale] || ""
+  );
+  const priceUnit = isOccasion
+    ? `/ ${occasionOptions[0].days} ${occasionOptions[0].days > 1 ? t.days : t.day}`
+    : useMonthly ? `/ ${t.month}` : `/ ${t.week}`;
   const title = product.titleI18n?.[locale] || product.title;
-  const categoryName = product.category?.name?.[locale] || product.category?.name?.en || "General";
-  const offerBadge = discountPercent > 0 ? `${discountPercent}% Off` : "Special Offer";
+  const categoryName = product.category?.name?.[locale] || product.category?.name?.en || t.general;
+  const offerBadge = t.off(discountPercent);
 
   return (
     <article
@@ -70,16 +98,19 @@ export function RentalProductCard({
     >
       <div className="absolute left-2 top-2 z-10 flex items-center gap-1.5 md:left-3 md:top-3 md:gap-2">
         <span className="rounded-full border border-[rgba(73,153,173,0.35)] bg-[rgba(73,153,173,0.14)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(47,118,135)] md:px-2.5 md:py-1 md:text-xs">
-          Available
+          {t.available}
         </span>
-        <span className="rounded-full border border-[rgba(73,153,173,0.35)] bg-[rgba(73,153,173,0.14)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(47,118,135)] md:px-2.5 md:py-1 md:text-xs">
-          {offerBadge}
-        </span>
+        {/* Only a genuine stored offer (offer price below the real base price) earns a badge. */}
+        {hasOffer && discountPercent > 0 ? (
+          <span className="rounded-full border border-[rgba(73,153,173,0.35)] bg-[rgba(73,153,173,0.14)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(47,118,135)] md:px-2.5 md:py-1 md:text-xs">
+            {offerBadge}
+          </span>
+        ) : null}
       </div>
 
       <button
         type="button"
-        aria-label="wishlist"
+        aria-label={t.wishlist}
         onClick={() => onToggleWishlist?.(product.id)}
         className="absolute right-2 top-2 z-10 rounded-full border border-zinc-300 bg-white/95 p-1 text-zinc-500 transition hover:border-[rgba(73,153,173,0.35)] hover:text-[rgb(73,153,173)] md:right-3 md:top-3 md:p-1.5"
       >
@@ -102,7 +133,7 @@ export function RentalProductCard({
           <div className="mx-auto flex h-28 w-full items-center justify-center rounded-lg bg-zinc-50 p-2 md:h-44 md:rounded-xl md:p-3">
             <img
               src={product.imageUrl}
-              alt={product.title}
+              alt={product.imageAlts?.[0]?.[locale] || product.imageAlts?.[0]?.de || title}
               className="h-full w-full object-contain transition duration-500 group-hover:scale-[1.04]"
             />
           </div>
@@ -113,23 +144,21 @@ export function RentalProductCard({
             </h3>
 
             <p className="line-clamp-2 min-h-[2.25rem] text-[12px] leading-4 text-zinc-600 md:min-h-[2.5rem] md:text-[13px] md:leading-5">
-              {shortDescription || "Flexible rental with trusted quality checks."}
+              {shortDescription || t.fallbackDescription}
             </p>
 
             <p className="line-clamp-1 text-[12px] text-zinc-700 md:text-[13px]">
-              Category: <span className="font-semibold text-[rgb(73,153,173)]">{categoryName}</span>
+              {t.category}: <span className="font-semibold text-[rgb(73,153,173)]">{categoryName}</span>
             </p>
 
             <div className="space-y-0.5 md:space-y-1">
               <p className="text-lg font-extrabold leading-none text-[rgb(60,138,158)] md:text-xl">
-                Rent EUR {formatAmount(effectivePrice)} {priceUnit}
+                {t.rent} {isOccasion ? t.from : ""}EUR {formatAmount(effectivePrice)} {priceUnit}
               </p>
               {hasOffer ? (
                 <p className="text-xs text-zinc-400 line-through md:text-sm">EUR {formatAmount(effectiveBuyerPrice)}</p>
-              ) : useMonthly ? (
-                <p className="text-xs text-zinc-400 line-through md:text-sm">EUR {formatAmount(effectivePrice + 50)}</p>
               ) : null}
-              <p className="text-[11px] font-medium text-zinc-500 md:text-xs">*Inclusive VAT</p>
+              <p className="text-[11px] font-medium text-zinc-500 md:text-xs">{t.vat}</p>
             </div>
           </div>
 
@@ -138,7 +167,7 @@ export function RentalProductCard({
               <rect x="3" y="5" width="18" height="16" rx="2" />
               <path d="M8 3v4M16 3v4M3 10h18" />
             </svg>
-            Rent it Now
+            {t.rentNow}
           </span>
         </div>
       </Link>

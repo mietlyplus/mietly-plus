@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -6,6 +6,7 @@ import { fetchPublicProducts } from "@/lib/api";
 import { Product } from "@/lib/types";
 import { RentalProductCard } from "@/components/rental-product-card";
 import { useWishlist } from "@/lib/use-wishlist";
+import { useSiteLocale } from "@/lib/use-site-locale";
 
 function shuffleProducts(items: Product[]) {
   const copy = [...items];
@@ -16,7 +17,13 @@ function shuffleProducts(items: Product[]) {
   return copy;
 }
 
+const headingCopy = {
+  en: { title: "Random Picks", subtitle: "Fresh selection on every refresh", left: "Scroll left", right: "Scroll right" },
+  de: { title: "Zufällige Auswahl", subtitle: "Bei jedem Laden neu gemischt", left: "Nach links scrollen", right: "Nach rechts scrollen" },
+};
+
 export function HomeRandomPicks() {
+  const { locale } = useSiteLocale("de");
   const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const railRef = useRef<HTMLDivElement>(null);
@@ -62,8 +69,8 @@ export function HomeRandomPicks() {
     <section className="mx-auto w-full max-w-[1280px] px-4 pb-10">
       <div className="mb-5 flex items-end justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-zinc-900 md:text-3xl">Random Picks</h2>
-          <p className="mt-1 text-sm text-zinc-500">Fresh selection on every refresh</p>
+          <h2 className="text-2xl font-bold text-zinc-900 md:text-3xl">{headingCopy[locale].title}</h2>
+          <p className="mt-1 text-sm text-zinc-500">{headingCopy[locale].subtitle}</p>
         </div>
         {showControls ? (
           <div className="flex items-center gap-2">
@@ -71,7 +78,7 @@ export function HomeRandomPicks() {
               type="button"
               onClick={() => scrollByCards("left")}
               className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-300 text-zinc-700 hover:border-[rgb(73,153,173)] hover:text-[rgb(60,138,158)]"
-              aria-label="Scroll random picks left"
+              aria-label={headingCopy[locale].left}
             >
               <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M12.5 4.5L7 10l5.5 5.5" />
@@ -81,7 +88,7 @@ export function HomeRandomPicks() {
               type="button"
               onClick={() => scrollByCards("right")}
               className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-300 text-zinc-700 hover:border-[rgb(73,153,173)] hover:text-[rgb(60,138,158)]"
-              aria-label="Scroll random picks right"
+              aria-label={headingCopy[locale].right}
             >
               <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M7.5 4.5L13 10l-5.5 5.5" />

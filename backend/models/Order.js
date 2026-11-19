@@ -96,6 +96,45 @@ const orderItemSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    // "recurring": the rental price is billed per period for a fixed term.
+    // "one_time": paid once (occasion rentals and single-period rentals).
+    billingType: {
+      type: String,
+      enum: ["one_time", "recurring"],
+      default: "one_time",
+    },
+  },
+  { _id: false }
+);
+
+// Fixed-term recurring billing. Only present on recurring orders. Money is in
+// euros like the rest of the order.
+const recurringSchema = new mongoose.Schema(
+  {
+    interval: { type: String, enum: ["week", "month"], required: true },
+    // Number of billing cycles in the term (longest line).
+    billingCycles: { type: Number, required: true, min: 2 },
+    // Invoices that Stripe has reported paid. Never decreases.
+    successfulCycles: { type: Number, default: 0, min: 0 },
+    // Rental amount of the first and of each following payment, in euros.
+    recurringAmount: { type: Number, default: 0, min: 0 },
+    // Rental over the whole term, excluding the one-time delivery fee and deposit.
+    totalRentalCommitment: { type: Number, default: 0, min: 0 },
+    // Delivery fee + deposit, charged once with the first payment.
+    oneTimeCharges: { type: Number, default: 0, min: 0 },
+    // What the customer paid at checkout.
+    dueToday: { type: Number, default: 0, min: 0 },
+    nextBillingDate: { type: Date, default: null },
+    status: {
+      type: String,
+      enum: ["pending", "active", "past_due", "completed", "cancelled"],
+      default: "pending",
+    },
+    lastPaymentAt: { type: Date, default: null },
+    lastPaymentFailedAt: { type: Date, default: null },
+    // Invoice ids already counted; makes counting idempotent even across
+    // different events that describe the same invoice.
+    paidInvoiceIds: { type: [String], default: [] },
   },
   { _id: false }
 );
@@ -172,8 +211,29 @@ const orderSchema = new mongoose.Schema(
     },
     paymentStatus: {
       type: String,
-      enum: ["unpaid", "paid", "refunded"],
+      // "partially_paid": a recurring rental whose term is not fully paid yet.
+      enum: ["unpaid", "partially_paid", "paid", "refunded"],
       default: "unpaid",
+    },
+    billingMode: {
+      type: String,
+      enum: ["one_time", "recurring"],
+      default: "one_time",
+    },
+    recurring: {
+      type: recurringSchema,
+      default: undefined,
+    },
+    stripeSubscriptionId: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true,
+    },
+    stripeSubscriptionScheduleId: {
+      type: String,
+      default: "",
+      trim: true,
     },
     rentalReminderSentForDates: {
       type: [String],
@@ -183,11 +243,16 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: "",
       trim: true,
+      index: true,
     },
     stripePaymentIntentId: {
       type: String,
       default: "",
       trim: true,
+    },
+    paymentConfirmedAt: {
+      type: Date,
+      default: null,
     },
   },
   {

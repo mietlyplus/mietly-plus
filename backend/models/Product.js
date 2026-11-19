@@ -190,6 +190,15 @@ const productSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    // Days between ordering and the earliest rental start (preparation + delivery).
+    // Applies to standard and occasion products alike. Default 2 is what the
+    // storefront always assumed, so existing products behave as before.
+    deliveryLeadDays: {
+      type: Number,
+      default: 2,
+      min: 0,
+      max: 30,
+    },
     verificationRequired: {
       type: Boolean,
       default: true,
@@ -217,6 +226,9 @@ const productSchema = new mongoose.Schema(
         {
           key: { type: String, trim: true },
           value: { type: String, trim: true },
+          // Optional English wording; the storefront falls back to key/value.
+          keyEn: { type: String, trim: true, default: "" },
+          valueEn: { type: String, trim: true, default: "" },
         },
       ],
       default: [],
@@ -229,6 +241,33 @@ const productSchema = new mongoose.Schema(
       ogTitle: { type: String, default: "", trim: true },
       ogDescription: { type: String, default: "", trim: true },
       ogImageUrl: { type: String, default: "", trim: true },
+    },
+    // "standard" products rent by week/month. "occasion" products rent by the day
+    // (1-7 days) at occasionDailyRate: price = daily rate x days, charged once.
+    rentalMode: { type: String, enum: ["standard", "occasion"], default: "standard" },
+    occasionDailyRate: { type: Number, min: 0, default: 0 },
+    // Legacy: explicit per-length prices from drafts made before the daily rate.
+    // Read only as a fallback to derive a daily rate; never written any more.
+    occasionPricing: {
+      type: [{ _id: false, days: { type: Number, min: 1, max: 7 }, price: { type: Number, min: 0 } }],
+      default: [],
+    },
+    model: { type: String, default: "", trim: true },
+    series: { type: String, default: "", trim: true },
+    identifiers: {
+      ean: { type: String, default: "", trim: true },
+      gtin: { type: String, default: "", trim: true },
+      mpn: { type: String, default: "", trim: true },
+    },
+    // For bundles and party packages: what is in the box.
+    includedItems: {
+      type: [{ _id: false, de: { type: String, trim: true }, en: { type: String, trim: true }, quantity: { type: Number, min: 1, default: 1 } }],
+      default: [],
+    },
+    // Alt text aligned with [imageUrl, ...galleryImages].
+    imageAlts: {
+      type: [{ _id: false, de: { type: String, default: "", trim: true }, en: { type: String, default: "", trim: true } }],
+      default: [],
     },
     isMostPopular: {
       type: Boolean,

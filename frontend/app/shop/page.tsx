@@ -8,11 +8,40 @@ import { HomeFooter } from "@/components/home-footer";
 import { RentalProductCard } from "@/components/rental-product-card";
 import { fetchCategoryTree, fetchPublicProducts } from "@/lib/api";
 import { useWishlist } from "@/lib/use-wishlist";
+import { useSiteLocale } from "@/lib/use-site-locale";
 import { Category, Product } from "@/lib/types";
 
 type StockFilter = "all" | "in_stock" | "out_of_stock";
 
+const shopCopy = {
+  en: {
+    title: "Shop Rentals", subtitle: "All available products on rent.",
+    filters: "Filters", activeFilters: "Active Filters", clearAll: "Clear All", clearAllFilters: "Clear All Filters",
+    priceRange: "Price Range", min: "MIN", max: "MAX", apply: "Apply",
+    categories: "Categories", allCategories: "All Categories", brands: "Brands", noBrands: "No brands",
+    stockStatus: "Stock Status", allProducts: "All Products", inStock: "In Stock", outOfStock: "Out of Stock",
+    products: (n: number) => `${n} product${n === 1 ? "" : "s"}`, loadMore: "Load More", close: "Close",
+    loading: "Loading products...", loadError: "Could not load products.",
+    chipPrice: (min: number, max: number) => `Price: EUR ${min} - EUR ${max}`,
+    chipCategory: "Category", chipBrands: "Brands",
+  },
+  de: {
+    title: "Mietprodukte", subtitle: "Alle verfügbaren Produkte zur Miete.",
+    filters: "Filter", activeFilters: "Aktive Filter", clearAll: "Alle löschen", clearAllFilters: "Alle Filter löschen",
+    priceRange: "Preisspanne", min: "MIN", max: "MAX", apply: "Anwenden",
+    categories: "Kategorien", allCategories: "Alle Kategorien", brands: "Marken", noBrands: "Keine Marken",
+    stockStatus: "Verfügbarkeit", allProducts: "Alle Produkte", inStock: "Auf Lager", outOfStock: "Nicht auf Lager",
+    products: (n: number) => `${n} ${n === 1 ? "Produkt" : "Produkte"}`, loadMore: "Mehr laden", close: "Schließen",
+    loading: "Produkte werden geladen...", loadError: "Produkte konnten nicht geladen werden.",
+    chipPrice: (min: number, max: number) => `Preis: ${min} € - ${max} €`,
+    chipCategory: "Kategorie", chipBrands: "Marken",
+  },
+};
+
 function getEffectivePrice(product: Product) {
+  if (product.rentalMode === "occasion" && product.occasionPricing?.length) {
+    return Math.min(...product.occasionPricing.map((option) => option.price));
+  }
   if (product.offerPrice > 0 && product.offerPrice < product.buyerPrice) return product.offerPrice;
   if (product.buyerPrice > 0) return product.buyerPrice;
   return product.monthlyPrice;
@@ -47,11 +76,13 @@ function ShopPageContent() {
   const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_BATCH);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const { isWishlisted, toggleWishlist } = useWishlist();
+  const { locale } = useSiteLocale("de");
+  const t = shopCopy[locale];
 
   useEffect(() => {
     fetchPublicProducts()
-      .then((data) => setProducts(data))
-      .catch(() => setError("Could not load products."));
+      .then((data) => setProducts(data.filter((product) => product.rentalMode !== "occasion")))
+      .catch(() => setError("load_error"));
 
     fetchCategoryTree().then(setCategories).catch((error) => {
         console.error("Failed to load categories:", error);
@@ -159,12 +190,12 @@ function ShopPageContent() {
 
   const activeFilters = useMemo(() => {
     const chips: string[] = [];
-    chips.push(`Price: EUR ${appliedMin} - EUR ${appliedMax}`);
-    if (selectedCategorySlug) chips.push(`Category: ${selectedCategorySlug}`);
-    if (selectedBrands.length) chips.push(`Brands: ${selectedBrands.join(", ")}`);
-    if (stockFilter !== "all") chips.push(stockFilter === "in_stock" ? "In Stock" : "Out of Stock");
+    chips.push(t.chipPrice(appliedMin, appliedMax));
+    if (selectedCategorySlug) chips.push(`${t.chipCategory}: ${selectedCategorySlug}`);
+    if (selectedBrands.length) chips.push(`${t.chipBrands}: ${selectedBrands.join(", ")}`);
+    if (stockFilter !== "all") chips.push(stockFilter === "in_stock" ? t.inStock : t.outOfStock);
     return chips;
-  }, [appliedMin, appliedMax, selectedCategorySlug, selectedBrands, stockFilter]);
+  }, [appliedMin, appliedMax, selectedCategorySlug, selectedBrands, stockFilter, t]);
 
   const toggleBrand = (brand: string) => {
     setSelectedBrands((prev) => (prev.includes(brand) ? prev.filter((item) => item !== brand) : [...prev, brand]));
@@ -205,9 +236,9 @@ function ShopPageContent() {
         <aside className="hidden h-fit space-y-5 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm lg:block lg:self-start">
           <div className="rounded-xl border border-lime-200 bg-lime-50 p-3">
             <div className="mb-2 flex items-center justify-between">
-              <p className="text-sm font-semibold text-zinc-800">Active Filters</p>
+              <p className="text-sm font-semibold text-zinc-800">{t.activeFilters}</p>
               <button type="button" onClick={clearAllFilters} className="text-xs font-semibold text-rose-600">
-                Clear All
+                {t.clearAll}
               </button>
             </div>
             <div className="space-y-2">
@@ -221,7 +252,7 @@ function ShopPageContent() {
 
           <section className="border-b border-zinc-200 pb-4">
             <div className="mb-2 flex items-center justify-between">
-              <h3 className="font-semibold text-lime-700">Price Range</h3>
+              <h3 className="font-semibold text-lime-700">{t.priceRange}</h3>
               <span className="text-zinc-400">-</span>
             </div>
             <input
@@ -234,22 +265,22 @@ function ShopPageContent() {
             />
             <div className="mt-3 grid grid-cols-2 gap-2">
               <label className="text-xs font-semibold text-zinc-600">
-                MIN
+                {t.min}
                 <input value={pendingMin} onChange={(e) => setPendingMin(e.target.value)} className="mt-1 w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm" />
               </label>
               <label className="text-xs font-semibold text-zinc-600">
-                MAX
+                {t.max}
                 <input value={pendingMax} onChange={(e) => setPendingMax(e.target.value)} className="mt-1 w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm" />
               </label>
             </div>
             <button type="button" onClick={applyPrice} className="mt-3 w-full rounded-md border border-lime-500 py-2 font-semibold text-lime-700">
-              Apply
+              {t.apply}
             </button>
           </section>
 
           <section className="border-b border-zinc-200 pb-4">
             <div className="mb-2 flex items-center justify-between">
-              <h3 className="font-semibold text-zinc-900">Categories</h3>
+              <h3 className="font-semibold text-zinc-900">{t.categories}</h3>
               <span className="text-zinc-400">-</span>
             </div>
             <label className="mb-2 flex items-center gap-2 text-sm text-zinc-700">
@@ -259,7 +290,7 @@ function ShopPageContent() {
                 onChange={() => setSelectedCategorySlug("")}
                 className="accent-lime-500"
               />
-              All Categories
+              {t.allCategories}
             </label>
             <div className="space-y-1">
               {topCategories.map((category) => {
@@ -274,7 +305,7 @@ function ShopPageContent() {
                           onChange={() => setSelectedCategorySlug(category.slug)}
                           className="accent-lime-500"
                         />
-                        {category.name.en}
+                        {category.name[locale] || category.name.en}
                       </label>
                       {category.children?.length ? (
                         <button
@@ -303,7 +334,7 @@ function ShopPageContent() {
                               onChange={() => setSelectedCategorySlug(child.slug)}
                               className="accent-lime-500"
                             />
-                            {child.name.en}
+                            {child.name[locale] || child.name.en}
                           </label>
                         ))}
                       </div>
@@ -316,11 +347,11 @@ function ShopPageContent() {
 
           <section className="border-b border-zinc-200 pb-4">
             <div className="mb-2 flex items-center justify-between">
-              <h3 className="font-semibold text-zinc-900">Brands</h3>
+              <h3 className="font-semibold text-zinc-900">{t.brands}</h3>
               <span className="text-zinc-400">v</span>
             </div>
             <div className="max-h-36 space-y-1 overflow-auto pr-1">
-              {allBrands.length === 0 ? <p className="text-sm text-zinc-500">No brands</p> : null}
+              {allBrands.length === 0 ? <p className="text-sm text-zinc-500">{t.noBrands}</p> : null}
               {allBrands.map((brand) => (
                 <label key={brand} className="flex items-center gap-2 text-sm text-zinc-700">
                   <input
@@ -336,19 +367,19 @@ function ShopPageContent() {
           </section>
 
           <section className="border-b border-zinc-200 pb-4">
-            <h3 className="mb-2 font-semibold text-zinc-900">Stock Status</h3>
+            <h3 className="mb-2 font-semibold text-zinc-900">{t.stockStatus}</h3>
             <div className="space-y-1">
               <label className="flex items-center gap-2 text-sm text-zinc-700">
                 <input type="radio" checked={stockFilter === "all"} onChange={() => setStockFilter("all")} className="accent-lime-500" />
-                All Products
+                {t.allProducts}
               </label>
               <label className="flex items-center gap-2 text-sm text-zinc-700">
                 <input type="radio" checked={stockFilter === "in_stock"} onChange={() => setStockFilter("in_stock")} className="accent-lime-500" />
-                In Stock
+                {t.inStock}
               </label>
               <label className="flex items-center gap-2 text-sm text-zinc-700">
                 <input type="radio" checked={stockFilter === "out_of_stock"} onChange={() => setStockFilter("out_of_stock")} className="accent-lime-500" />
-                Out of Stock
+                {t.outOfStock}
               </label>
             </div>
           </section>
@@ -358,15 +389,15 @@ function ShopPageContent() {
             onClick={clearAllFilters}
             className="w-full rounded-md bg-rose-600 py-2.5 font-semibold text-white"
           >
-            Clear All Filters
+            {t.clearAllFilters}
           </button>
         </aside>
 
         <section>
           <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h1 className="text-3xl font-extrabold text-zinc-900 md:text-4xl">Shop Rentals</h1>
-              <p className="mt-2 text-zinc-600">All available products on rent.</p>
+              <h1 className="text-3xl font-extrabold text-zinc-900 md:text-4xl">{t.title}</h1>
+              <p className="mt-2 text-zinc-600">{t.subtitle}</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -374,15 +405,15 @@ function ShopPageContent() {
                 onClick={() => setMobileFiltersOpen(true)}
                 className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 lg:hidden"
               >
-                Filters
+                {t.filters}
               </button>
               <span className="rounded-full border border-lime-200 bg-lime-50 px-4 py-1 text-sm font-semibold text-lime-700">
-                {filteredProducts.length} products
+                {t.products(filteredProducts.length)}
               </span>
             </div>
           </div>
 
-          {error ? <p className="mb-4 text-sm text-red-600">{error}</p> : null}
+          {error ? <p className="mb-4 text-sm text-red-600">{t.loadError}</p> : null}
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {visibleProducts.map((product) => (
@@ -402,7 +433,7 @@ function ShopPageContent() {
                 onClick={() => setVisibleCount((count) => count + PRODUCTS_PER_BATCH)}
                 className="rounded-lg border border-lime-500 bg-white px-6 py-2.5 text-sm font-bold text-lime-700 hover:bg-lime-50"
               >
-                Load More
+                {t.loadMore}
               </button>
             </div>
           ) : null}
@@ -410,7 +441,7 @@ function ShopPageContent() {
           {selectedCategory && selectedCategorySeoHtml ? (
             <section className="mt-10 rounded-2xl border border-zinc-200 bg-white p-5 md:p-8">
               <h2 className="text-2xl font-extrabold text-zinc-900">
-                {selectedCategory.seo?.metaTitle || selectedCategory.name.en}
+                {selectedCategory.name[locale] || selectedCategory.name.en}
               </h2>
               <div
                 className="seo-content mt-4 space-y-4 text-[15px] leading-7 text-zinc-700"
@@ -428,22 +459,22 @@ function ShopPageContent() {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-zinc-900">Filters</h2>
+              <h2 className="text-lg font-bold text-zinc-900">{t.filters}</h2>
               <button
                 type="button"
                 onClick={() => setMobileFiltersOpen(false)}
                 className="rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-600"
               >
-                Close
+                {t.close}
               </button>
             </div>
 
             <div className="space-y-5">
               <div className="rounded-xl border border-lime-200 bg-lime-50 p-3">
                 <div className="mb-2 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-zinc-800">Active Filters</p>
+                  <p className="text-sm font-semibold text-zinc-800">{t.activeFilters}</p>
                   <button type="button" onClick={clearAllFilters} className="text-xs font-semibold text-rose-600">
-                    Clear All
+                    {t.clearAll}
                   </button>
                 </div>
                 <div className="space-y-2">
@@ -457,7 +488,7 @@ function ShopPageContent() {
 
               <section className="border-b border-zinc-200 pb-4">
                 <div className="mb-2 flex items-center justify-between">
-                  <h3 className="font-semibold text-lime-700">Price Range</h3>
+                  <h3 className="font-semibold text-lime-700">{t.priceRange}</h3>
                   <span className="text-zinc-400">-</span>
                 </div>
                 <input
@@ -470,22 +501,22 @@ function ShopPageContent() {
                 />
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <label className="text-xs font-semibold text-zinc-600">
-                    MIN
+                    {t.min}
                     <input value={pendingMin} onChange={(e) => setPendingMin(e.target.value)} className="mt-1 w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm" />
                   </label>
                   <label className="text-xs font-semibold text-zinc-600">
-                    MAX
+                    {t.max}
                     <input value={pendingMax} onChange={(e) => setPendingMax(e.target.value)} className="mt-1 w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm" />
                   </label>
                 </div>
                 <button type="button" onClick={applyPrice} className="mt-3 w-full rounded-md border border-lime-500 py-2 font-semibold text-lime-700">
-                  Apply
+                  {t.apply}
                 </button>
               </section>
 
               <section className="border-b border-zinc-200 pb-4">
                 <div className="mb-2 flex items-center justify-between">
-                  <h3 className="font-semibold text-zinc-900">Categories</h3>
+                  <h3 className="font-semibold text-zinc-900">{t.categories}</h3>
                   <span className="text-zinc-400">-</span>
                 </div>
                 <label className="mb-2 flex items-center gap-2 text-sm text-zinc-700">
@@ -495,7 +526,7 @@ function ShopPageContent() {
                     onChange={() => setSelectedCategorySlug("")}
                     className="accent-lime-500"
                   />
-                  All Categories
+                  {t.allCategories}
                 </label>
                 <div className="space-y-1">
                   {topCategories.map((category) => {
@@ -510,7 +541,7 @@ function ShopPageContent() {
                               onChange={() => setSelectedCategorySlug(category.slug)}
                               className="accent-lime-500"
                             />
-                            {category.name.en}
+                            {category.name[locale] || category.name.en}
                           </label>
                           {category.children?.length ? (
                             <button
@@ -539,7 +570,7 @@ function ShopPageContent() {
                                   onChange={() => setSelectedCategorySlug(child.slug)}
                                   className="accent-lime-500"
                                 />
-                                {child.name.en}
+                                {child.name[locale] || child.name.en}
                               </label>
                             ))}
                           </div>
@@ -552,11 +583,11 @@ function ShopPageContent() {
 
               <section className="border-b border-zinc-200 pb-4">
                 <div className="mb-2 flex items-center justify-between">
-                  <h3 className="font-semibold text-zinc-900">Brands</h3>
+                  <h3 className="font-semibold text-zinc-900">{t.brands}</h3>
                   <span className="text-zinc-400">v</span>
                 </div>
                 <div className="max-h-36 space-y-1 overflow-auto pr-1">
-                  {allBrands.length === 0 ? <p className="text-sm text-zinc-500">No brands</p> : null}
+                  {allBrands.length === 0 ? <p className="text-sm text-zinc-500">{t.noBrands}</p> : null}
                   {allBrands.map((brand) => (
                     <label key={brand} className="flex items-center gap-2 text-sm text-zinc-700">
                       <input
@@ -572,19 +603,19 @@ function ShopPageContent() {
               </section>
 
               <section className="border-b border-zinc-200 pb-4">
-                <h3 className="mb-2 font-semibold text-zinc-900">Stock Status</h3>
+                <h3 className="mb-2 font-semibold text-zinc-900">{t.stockStatus}</h3>
                 <div className="space-y-1">
                   <label className="flex items-center gap-2 text-sm text-zinc-700">
                     <input type="radio" checked={stockFilter === "all"} onChange={() => setStockFilter("all")} className="accent-lime-500" />
-                    All Products
+                    {t.allProducts}
                   </label>
                   <label className="flex items-center gap-2 text-sm text-zinc-700">
                     <input type="radio" checked={stockFilter === "in_stock"} onChange={() => setStockFilter("in_stock")} className="accent-lime-500" />
-                    In Stock
+                    {t.inStock}
                   </label>
                   <label className="flex items-center gap-2 text-sm text-zinc-700">
                     <input type="radio" checked={stockFilter === "out_of_stock"} onChange={() => setStockFilter("out_of_stock")} className="accent-lime-500" />
-                    Out of Stock
+                    {t.outOfStock}
                   </label>
                 </div>
               </section>
@@ -594,7 +625,7 @@ function ShopPageContent() {
                 onClick={clearAllFilters}
                 className="w-full rounded-md bg-rose-600 py-2.5 font-semibold text-white"
               >
-                Clear All Filters
+                {t.clearAllFilters}
               </button>
             </div>
           </aside>
@@ -606,11 +637,12 @@ function ShopPageContent() {
 }
 
 function ShopPageFallback() {
+  const { locale } = useSiteLocale("de");
   return (
     <div className="min-h-screen bg-zinc-50">
       <ClientNavbar />
       <main className="mx-auto w-full max-w-[1280px] px-4 py-10">
-        <div className="rounded-2xl border border-zinc-200 bg-white p-6 text-sm text-zinc-600">Loading products...</div>
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 text-sm text-zinc-600">{shopCopy[locale].loading}</div>
       </main>
       <HomeFooter />
     </div>

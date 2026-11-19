@@ -5,6 +5,7 @@ import {
   BlogPost,
   Brand,
   Category,
+  CheckoutQuote,
   Order,
   Product,
   ProductDraft,
@@ -1200,28 +1201,67 @@ export async function createIdentityVerificationSession(token: string) {
   return response.json() as Promise<{ verified: boolean; sessionId?: string; url?: string }>;
 }
 
+/** Asks the backend to price the cart. The response is authoritative: the UI
+ *  displays these amounts and clamps to these limits rather than trusting the
+ *  values cached in localStorage. */
+export async function fetchCheckoutQuote(
+  items: Array<{
+    id: string;
+    productId: string;
+    quantity: number;
+    durationValue: number;
+    durationUnit: "day" | "week" | "month";
+    startDate?: string;
+  }>
+): Promise<CheckoutQuote> {
+  const response = await fetchWithPortFallback("/api/payments/checkout-quote", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Could not price the cart." }));
+    throw new Error(error.message || "Could not price the cart.");
+  }
+
+  return (await response.json()) as CheckoutQuote;
+}
+
+/** Raised when the server refuses to charge because its authoritative total no
+ *  longer matches the amount the customer approved. Carries the refreshed quote
+ *  so the UI can re-render and ask for a fresh confirmation. */
+export class CheckoutPriceChangedError extends Error {
+  readonly code = "PRICE_CHANGED";
+  readonly quote: CheckoutQuote;
+
+  constructor(message: string, quote: CheckoutQuote) {
+    super(message);
+    this.name = "CheckoutPriceChangedError";
+    this.quote = quote;
+  }
+}
+
 export async function createCheckoutSession(
   token: string,
   payload: {
+    // Non-chargeable intent only. The backend derives every amount from the
+    // product record and ignores any price supplied here.
     items: Array<{
-      productId?: string;
-      slug?: string;
-      imageUrl?: string;
-      categoryName?: string;
-      brandName?: string;
-      title: string;
+      id?: string;
+      productId: string;
       quantity: number;
-      unitPrice: number;
-      baseUnitPrice?: number;
-      durationValue?: number;
-      durationUnit?: "day" | "week" | "month";
-      startDate?: string;
-      depositEnabled?: boolean;
-      securityDeposit?: number;
-      deliveryFee?: number;
-      durationLabel?: string;
-      currency?: string;
+      durationValue: number;
+      durationUnit: "day" | "week" | "month";
+      startDate: string;
     }>;
+    /** The total the customer just approved. A precondition only — the server
+     *  recalculates from the database and refuses on mismatch. It can never set
+     *  or influence the amount charged. */
+    expectedTotal?: number;
+    /** The amount due today, likewise a precondition only. */
+    expectedDueToday?: number;
     shippingAddress: {
       fullName: string;
       phone: string;
@@ -1245,10 +1285,28 @@ export async function createCheckoutSession(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: "Could not create checkout session." }));
+
+    if (response.status === 409 && error?.code === "PRICE_CHANGED") {
+      throw new CheckoutPriceChangedError(
+        error.message || "Pricing changed. Please confirm the updated total.",
+        error as CheckoutQuote
+      );
+    }
+
     throw new Error(error.message || "Could not create checkout session.");
   }
 
-  return response.json() as Promise<{ id: string; url: string; orderId: string; orderNumber: string }>;
+  return response.json() as Promise<{
+    id: string;
+    url: string;
+    orderId: string;
+    orderNumber: string;
+    currency: string;
+    subtotal: number;
+    depositTotal: number;
+    deliveryTotal: number;
+    total: number;
+  }>;
 }
 
 export async function confirmCheckoutSession(token: string, payload: { sessionId: string }) {
@@ -1522,4 +1580,55 @@ export async function discardProductDraft(adminToken: string, draftId: string) {
   return adminJson<{ message: string }>(`/api/admin/product-drafts/${encodeURIComponent(draftId)}`, adminToken, {
     method: "DELETE",
   });
+}
+
+export type ProductPackageItem = {
+  id: string;
+  externalId: string;
+  title: string;
+  rentalMode: "standard" | "occasion";
+  status: "ready" | "invalid" | "imported";
+  errors: string[];
+  warnings: string[];
+  imageCount: number;
+  importedDraftId: string | null;
+  importedProductId: string | null;
+  importedAt: string | null;
+  updatedAt: string;
+};
+
+export function submitProductPackages(adminToken: string, packages: unknown[]) {
+  return adminJson<{ results: Array<Partial<ProductPackageItem> & { externalId: string; status: string; errors: string[]; warnings: string[] }> }>(
+    "/api/admin/product-packages",
+    adminToken,
+    { method: "POST", body: JSON.stringify({ packages }) }
+  );
+}
+
+export function fetchProductPackages(adminToken: string) {
+  return adminJson<{ items: ProductPackageItem[] }>("/api/admin/product-packages", adminToken);
+}
+
+export function importProductPackages(adminToken: string, body: { ids?: string[]; allReady?: boolean }) {
+  return adminJson<{
+    imported: Array<{ id: string; externalId: string; draftId: string; productId: string }>;
+    failed: Array<{ id: string; externalId: string; message: string }>;
+    remaining: number;
+  }>("/api/admin/product-packages/import", adminToken, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function deleteProductPackage(adminToken: string, id: string) {
+  return adminJson<{ message: string }>(`/api/admin/product-packages/${encodeURIComponent(id)}`, adminToken, { method: "DELETE" });
+}
+
+export function updateRentalTerms(
+  adminToken: string,
+  productId: string,
+  body: { occasionDailyRate?: number; deliveryLeadDays?: number }
+) {
+  return adminJson<{ rentalMode: "standard" | "occasion"; occasionDailyRate: number; occasionPricing: { days: number; price: number }[]; deliveryLeadDays: number }>(
+    `/api/admin/products/${encodeURIComponent(productId)}/rental-terms`,
+    adminToken,
+    { method: "PATCH", body: JSON.stringify(body) }
+  );
 }

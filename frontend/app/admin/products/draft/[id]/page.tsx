@@ -1,5 +1,6 @@
 "use client";
 
+import { RentalTermsCard } from "@/components/admin/rental-terms-card";
 import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -236,10 +237,19 @@ export default function ProductDraftReviewPage() {
             <dd className="inline break-all">{draft.sourceUrl || "—"}</dd></div>
           <div><dt className="inline text-zinc-500">Extraction: </dt>
             <dd className="inline">{draft.provenance.extractionConfidence || "—"} ({draft.provenance.usedStrategies.join(", ") || "none"})</dd></div>
-          <div><dt className="inline text-zinc-500">Weekly rent: </dt>
-            <dd className="inline font-semibold">€{draft.weeklyPrice.toFixed(2)}</dd></div>
-          <div><dt className="inline text-zinc-500">Monthly rent: </dt>
-            <dd className="inline font-semibold">€{draft.monthlyPrice.toFixed(2)}</dd></div>
+          {draft.product?.rentalMode === "occasion" ? (
+            <div className="sm:col-span-2"><dt className="inline text-zinc-500">Occasion rental (1-7 days): </dt>
+              <dd className="inline font-semibold">
+                {draft.product.occasionDailyRate ? `€${draft.product.occasionDailyRate.toFixed(2)} per day, paid once` : "no daily price"}
+              </dd></div>
+          ) : (
+            <>
+              <div><dt className="inline text-zinc-500">Weekly rent: </dt>
+                <dd className="inline font-semibold">€{draft.weeklyPrice.toFixed(2)}</dd></div>
+              <div><dt className="inline text-zinc-500">Monthly rent: </dt>
+                <dd className="inline font-semibold">€{draft.monthlyPrice.toFixed(2)}</dd></div>
+            </>
+          )}
           <div className="sm:col-span-2">
             <dt className="inline text-zinc-500">Text provider: </dt>
             <dd className="inline">{draft.providers.text.id} ({draft.providers.text.real ? "real" : "FIXTURE"})</dd>
@@ -453,6 +463,15 @@ export default function ProductDraftReviewPage() {
           Regenerating one image leaves the listing text and the other images untouched.
         </p>
       </div>
+
+      {product ? (
+        <RentalTermsCard
+          key={`${product.id}-${product.deliveryLeadDays}-${product.occasionDailyRate}`}
+          token={token}
+          product={product}
+          onSaved={() => void load(token)}
+        />
+      ) : null}
 
       {product ? (
         <div className="rounded-xl border border-zinc-200 bg-white p-4 text-sm">

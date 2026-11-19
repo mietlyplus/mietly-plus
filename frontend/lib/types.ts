@@ -107,13 +107,24 @@ export type Product = {
   minimumRentalDays: number;
   maximumRentalDays: number;
   rentalPeriodUnit: "day" | "week" | "month";
+  rentalMode?: "standard" | "occasion";
+  deliveryLeadDays?: number;
+  /** Occasion products: price per day. The total is daily rate x days, paid once. */
+  occasionDailyRate?: number;
+  /** Derived by the server (daily rate x 1..7 days); never edited directly. */
+  occasionPricing?: { days: number; price: number }[];
+  model?: string;
+  series?: string;
+  identifiers?: { ean: string; gtin: string; mpn: string };
+  includedItems?: { de: string; en: string; quantity: number }[];
+  imageAlts?: { de: string; en: string }[];
   deliveryFee: number;
   verificationRequired: boolean;
   depositEnabled: boolean;
   securityDeposit: number;
   replacementValue: number;
   refundable: boolean;
-  specifications: Array<{ key: string; value: string }>;
+  specifications: Array<{ key: string; value: string; keyEn?: string; valueEn?: string }>;
   seo: {
     metaTitle?: string;
     metaDescription?: string;
@@ -217,6 +228,7 @@ export type Order = {
     baseUnitPrice: number;
     durationValue: number;
     durationUnit: "day" | "week" | "month";
+    billingType?: "one_time" | "recurring";
     startDate: string;
     depositEnabled: boolean;
     securityDeposit: number;
@@ -233,7 +245,23 @@ export type Order = {
   total: number;
   status: "pending_payment" | "paid" | "failed" | "cancelled";
   fulfillmentStatus: "pending" | "processing" | "shipped" | "delivered" | "cancelled" | "returned";
-  paymentStatus: "unpaid" | "paid" | "refunded";
+  paymentStatus: "unpaid" | "partially_paid" | "paid" | "refunded";
+  /** Historical orders are all "one_time". */
+  billingMode?: "one_time" | "recurring";
+  recurring?: {
+    interval: "week" | "month";
+    billingCycles: number;
+    successfulCycles: number;
+    recurringAmount: number;
+    totalRentalCommitment: number;
+    oneTimeCharges: number;
+    dueToday: number;
+    nextBillingDate: string;
+    status: "pending" | "active" | "past_due" | "completed" | "cancelled";
+    lastPaymentAt: string;
+  } | null;
+  stripeSubscriptionId?: string;
+  stripeSubscriptionScheduleId?: string;
   stripeCheckoutSessionId: string;
   stripePaymentIntentId: string;
   rentalEndDate: string;
@@ -247,8 +275,11 @@ export type CartItem = {
   slug: string;
   categorySlug?: string;
   title: string;
+  /** Both languages, so the cart follows the language toggle. Absent on older carts. */
+  titleI18n?: { en: string; de: string };
   imageUrl: string;
   categoryName: string;
+  categoryNameI18n?: { en: string; de: string };
   brandName: string;
   unitPrice: number;
   baseUnitPrice: number;
@@ -260,6 +291,9 @@ export type CartItem = {
   depositEnabled: boolean;
   securityDeposit: number;
   deliveryFee: number;
+  /** Snapshot of the product's rental cap at add-to-cart time. Absent on carts
+   *  saved before this field existed; the checkout quote is authoritative. */
+  maxRentalQuantity?: number;
   addedAt: string;
 };
 
@@ -364,4 +398,82 @@ export type AiProviderStatus = {
     databaseName: string;
     uploadFolder: string;
   };
+};
+
+/** Server-calculated pricing for a cart. The backend is the only source of
+ *  chargeable amounts, so the UI renders these rather than its own arithmetic. */
+export type CheckoutQuoteLimits = {
+  maxQuantity: number;
+  minDuration: number | null;
+  maxDuration: number | null;
+  availableUnits: Array<"day" | "week" | "month">;
+  occasionOptions?: Array<{ days: number; price: number }>;
+};
+
+export type CheckoutQuoteIssue = {
+  lineId: string;
+  productId: string;
+  code: string;
+  message: string;
+};
+
+export type CheckoutQuoteLine = {
+  lineId: string;
+  productId: string;
+  title: string;
+  valid: boolean;
+  limits: CheckoutQuoteLimits | null;
+  issue?: CheckoutQuoteIssue;
+  quantity?: number;
+  durationValue?: number;
+  durationUnit?: "day" | "week" | "month";
+  billingType?: "one_time" | "recurring";
+  /** Due at checkout for this line (first period + one-time delivery/deposit for a recurring line). */
+  lineDueToday?: number;
+  /** Rental price of each following period. 0 for one-time lines. */
+  recurringPerPeriod?: number;
+  remainingPayments?: number;
+  unitPrice?: number;
+  baseUnitPrice?: number;
+  listUnitPrice?: number;
+  depositEnabled?: boolean;
+  securityDeposit?: number;
+  deliveryFee?: number;
+  lineSubtotal?: number;
+  lineDeposit?: number;
+  lineDelivery?: number;
+  lineTotal?: number;
+  verificationRequired?: boolean;
+};
+
+/** How the cart is billed, calculated by the server. */
+export type CheckoutBilling = {
+  mode: "one_time" | "recurring";
+  interval: "" | "week" | "month";
+  billingCycles: number;
+  dueToday: number;
+  totalRental: number;
+  oneTimeCharges: number;
+  /** Rental amount of the first and the following payments. */
+  recurringAmount: number;
+  /** Payments after today, as runs of an equal amount. */
+  upcoming: Array<{ payments: number; amount: number }>;
+};
+
+export type CheckoutQuote = {
+  currency: string;
+  lines: CheckoutQuoteLine[];
+  issues: CheckoutQuoteIssue[];
+  totals: {
+    subtotal: number;
+    depositTotal: number;
+    deliveryTotal: number;
+    /** The whole commitment. */
+    total: number;
+    /** What is charged at checkout; below `total` for a recurring rental. */
+    dueToday: number;
+  };
+  billing?: CheckoutBilling | null;
+  requiresIdentityVerification: boolean;
+  valid: boolean;
 };

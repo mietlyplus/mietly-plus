@@ -8,6 +8,8 @@ import { HomeFooter } from "@/components/home-footer";
 import { RentalProductCard } from "@/components/rental-product-card";
 import { fetchPublicProductBySlug, fetchPublicProducts } from "@/lib/api";
 import { addCartItem } from "@/lib/cart";
+import { euro, paymentCopy, thenLine } from "@/lib/payment-copy";
+import { earliestStartDate } from "@/lib/delivery-date";
 import { useSiteLocale } from "@/lib/use-site-locale";
 import { useWishlist } from "@/lib/use-wishlist";
 import { Product } from "@/lib/types";
@@ -17,16 +19,6 @@ function formatAmount(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
-}
-
-function addDays(date: Date, days: number) {
-  const copy = new Date(date);
-  copy.setDate(copy.getDate() + days);
-  return copy;
-}
-
-function toDateInputValue(date: Date) {
-  return date.toISOString().split("T")[0];
 }
 
 function normalizeImages(product: Product) {
@@ -52,10 +44,11 @@ function getDurationRange(product: Product, mode: "week" | "month") {
   return { min: minWeeks, max: maxWeeks };
 }
 
-function durationText(value: number, unit: Product["rentalPeriodUnit"]) {
-  if (unit === "month") return `${value} month${value > 1 ? "s" : ""}`;
-  if (unit === "day") return `${value} day${value > 1 ? "s" : ""}`;
-  return `${value} week${value > 1 ? "s" : ""}`;
+function durationText(value: number, unit: Product["rentalPeriodUnit"], locale: "en" | "de") {
+  const c = pdpCopy[locale];
+  if (unit === "month") return `${value} ${value > 1 ? c.months : c.month}`;
+  if (unit === "day") return `${value} ${value > 1 ? c.days : c.day}`;
+  return `${value} ${value > 1 ? c.weeks : c.week}`;
 }
 
 const productNotesCopy = {
@@ -73,6 +66,51 @@ const productNotesCopy = {
   },
 };
 
+const pdpCopy = {
+  en: {
+    loading: "Loading product...", notFound: "Product not found.",
+    allProducts: "All products", category: "Category",
+    prevImage: "Previous image", nextImage: "Next image",
+    selectPeriod: "Select your rental period", selectedLabel: "Selected:",
+    byWeek: "Rent by week", byMonth: "Rent by month", startDate: "Start date",
+    deposit: "Security deposit", idVerification: "Identity verification",
+    idRequired: "Required for checkout", idNotRequired: "Not required",
+    addToCart: "Add to cart", addedToCart: "Added to cart.", openCart: "Open cart",
+    specsHeading: "Product specifications", showMore: "Show more", showLess: "Show less",
+    specsSoon: "Specifications will be updated soon.", descHeading: "Description",
+    alsoLike: "We think you may also like", scrollLeft: "Scroll related left", scrollRight: "Scroll related right",
+    week: "week", weeks: "weeks", month: "month", months: "months",
+    chooseDays: "Choose how many days",
+    selected: "selected",
+    day: "day", days: "days",
+    includedTitle: "What's included",
+    occasionNote: "Occasion rental for 1 to 7 days at a daily price, paid once at checkout.",
+    leadTime: (days: number, date: string) => `Delivery lead time: ${days} day${days === 1 ? "" : "s"}. Earliest start date: ${date}.`,
+    dateTooEarly: (date: string) => `Please choose a start date on or after ${date}.`,
+  },
+  de: {
+    loading: "Produkt wird geladen...", notFound: "Produkt nicht gefunden.",
+    allProducts: "Alle Produkte", category: "Kategorie",
+    prevImage: "Vorheriges Bild", nextImage: "Nächstes Bild",
+    selectPeriod: "Mietdauer wählen", selectedLabel: "Gewählt:",
+    byWeek: "Pro Woche mieten", byMonth: "Pro Monat mieten", startDate: "Startdatum",
+    deposit: "Kaution", idVerification: "Identitätsprüfung",
+    idRequired: "Beim Checkout erforderlich", idNotRequired: "Nicht erforderlich",
+    addToCart: "In den Warenkorb", addedToCart: "Zum Warenkorb hinzugefügt.", openCart: "Warenkorb öffnen",
+    specsHeading: "Produktspezifikationen", showMore: "Mehr anzeigen", showLess: "Weniger anzeigen",
+    specsSoon: "Spezifikationen folgen in Kürze.", descHeading: "Beschreibung",
+    alsoLike: "Das könnte dir auch gefallen", scrollLeft: "Nach links scrollen", scrollRight: "Nach rechts scrollen",
+    week: "Woche", weeks: "Wochen", month: "Monat", months: "Monate",
+    chooseDays: "Wie viele Tage?",
+    selected: "gewählt",
+    day: "Tag", days: "Tage",
+    includedTitle: "Das ist enthalten",
+    occasionNote: "Anlass-Miete für 1 bis 7 Tage zum Tagespreis, einmalig beim Checkout bezahlt.",
+    leadTime: (days: number, date: string) => `Liefervorlauf: ${days} ${days === 1 ? "Tag" : "Tage"}. Frühester Mietstart: ${date}.`,
+    dateTooEarly: (date: string) => `Bitte wähle ein Startdatum ab dem ${date}.`,
+  },
+};
+
 export default function ProductDetailsPage() {
   const router = useRouter();
   const { locale } = useSiteLocale("de");
@@ -85,7 +123,8 @@ export default function ProductDetailsPage() {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [rentalMode, setRentalMode] = useState<"week" | "month">("week");
   const [activeDuration, setActiveDuration] = useState(1);
-  const [deliveryDate, setDeliveryDate] = useState(toDateInputValue(addDays(new Date(), 2)));
+  const [occasionDays, setOccasionDays] = useState(0);
+  const [deliveryDate, setDeliveryDate] = useState(earliestStartDate(2));
   const [showAllSpecs, setShowAllSpecs] = useState(false);
   const [cartFeedback, setCartFeedback] = useState("");
   const [error, setError] = useState("");
@@ -126,7 +165,7 @@ export default function ProductDetailsPage() {
         setRelated(list);
       })
       .catch(() => {
-        setError("Product not found.");
+        setError("not_found");
         setProduct(null);
       })
       .finally(() => setLoading(false));
@@ -134,9 +173,14 @@ export default function ProductDetailsPage() {
 
   const images = useMemo(() => (product ? normalizeImages(product) : []), [product]);
   const durationRange = useMemo(() => (product ? getDurationRange(product, rentalMode) : null), [product, rentalMode]);
-  const minDeliveryDate = useMemo(() => toDateInputValue(addDays(new Date(), 2)), []);
+  // One lead-time field per product (standard and occasion alike); 2 is the old default.
+  const leadDays = Number.isInteger(product?.deliveryLeadDays) ? Number(product?.deliveryLeadDays) : 2;
+  const minDeliveryDate = useMemo(() => earliestStartDate(leadDays), [leadDays]);
+  // A chosen date earlier than the lead time is never used: the picker shows the earliest allowed one.
+  const selectedStartDate = deliveryDate < minDeliveryDate ? minDeliveryDate : deliveryDate;
 
   const title = product?.titleI18n?.[locale] || product?.title || "";
+  const altFor = (index: number) => product?.imageAlts?.[index]?.[locale] || product?.imageAlts?.[index]?.de || (index === 0 ? title : `${title} ${index + 1}`);
   const description = product?.descriptionI18n?.[locale] || product?.description || "";
   
   const currentImage = images[activeImageIndex] || product?.imageUrl || "";
@@ -165,14 +209,26 @@ export default function ProductDetailsPage() {
   const showWeekly = isWeeklyAvailable || (!isWeeklyAvailable && !isMonthlyAvailable);
   const showMonthly = isMonthlyAvailable || (!isWeeklyAvailable && !isMonthlyAvailable);
   const multipliedOfferPrice = effectiveUnitPrice * activeDuration;
-  const multipliedBuyerPrice = buyerPrice * activeDuration;
+  // Occasion products rent by the day: the server derives each total as daily rate x days.
+  const occasionOptions = product?.rentalMode === "occasion" ? [...(product.occasionPricing || [])].sort((a, b) => a.days - b.days) : [];
+  const isOccasion = occasionOptions.length > 0;
+  const selectedOccasion = occasionOptions.find((option) => option.days === occasionDays) || occasionOptions[0];
+  const shownPrice = isOccasion ? selectedOccasion.price : multipliedOfferPrice;
+  const shownDuration = isOccasion ? selectedOccasion.days : activeDuration;
+  const shownUnit: Product["rentalPeriodUnit"] = isOccasion ? "day" : rentalMode;
+  const shownHasOffer = !isOccasion && hasOffer;
   const visibleSpecs = showAllSpecs ? product?.specifications || [] : (product?.specifications || []).slice(0, 3);
   const productNotes = productNotesCopy[locale];
   const deliveryFee = Number(product?.deliveryFee || 0);
+  const payCopy = paymentCopy(locale);
+  // Longer than one period: the rental price recurs, delivery and deposit are charged once.
+  const isRecurringSelection = !isOccasion && activeDuration > 1;
+  const oneTimeFees = (product?.depositEnabled ? Number(product.securityDeposit || 0) : 0) + deliveryFee;
+  // Reflects this product's own configuration: its lead time and its delivery fee.
   const deliveryLine =
     locale === "de"
-      ? `Lieferung in 1-4 Werktagen für €${formatAmount(deliveryFee)}.`
-      : `Delivery in 1-4 business days for €${formatAmount(deliveryFee)}.`;
+      ? `Liefervorlauf: ${leadDays} ${leadDays === 1 ? "Tag" : "Tage"}. Liefergebühr: €${formatAmount(deliveryFee)}.`
+      : `Delivery lead time: ${leadDays} ${leadDays === 1 ? "day" : "days"}. Delivery fee: €${formatAmount(deliveryFee)}.`;
 
   const scrollRelated = (direction: "left" | "right") => {
     const rail = relatedRailRef.current;
@@ -184,26 +240,33 @@ export default function ProductDetailsPage() {
 
   const onAddToCart = () => {
     if (!product) return;
+    if (selectedStartDate < minDeliveryDate) {
+      setCartFeedback(pdpCopy[locale].dateTooEarly(minDeliveryDate));
+      return;
+    }
     addCartItem({
       productId: product.id,
       slug: product.slug,
       categorySlug: product.category?.slug || "",
       title: product.title,
+      titleI18n: product.titleI18n,
       imageUrl: product.imageUrl,
       categoryName: product.category?.name.en || "General",
+      categoryNameI18n: product.category?.name,
       brandName: product.brand || product.brandData?.name || "",
-      unitPrice: multipliedOfferPrice,
-      baseUnitPrice: effectiveUnitPrice,
-      durationValue: activeDuration,
-      durationUnit: rentalMode,
-      startDate: deliveryDate,
+      unitPrice: shownPrice,
+      baseUnitPrice: isOccasion ? shownPrice : effectiveUnitPrice,
+      durationValue: shownDuration,
+      durationUnit: shownUnit,
+      startDate: selectedStartDate,
       quantity: 1,
       verificationRequired: product.verificationRequired !== false,
       depositEnabled: Boolean(product.depositEnabled),
       securityDeposit: Number(product.securityDeposit || 0),
       deliveryFee: Number(product.deliveryFee || 0),
+      maxRentalQuantity: Math.max(1, Number(product.maxRentalQuantity) || 1),
     });
-    setCartFeedback("Added to cart.");
+    setCartFeedback(pdpCopy[locale].addedToCart);
     window.setTimeout(() => setCartFeedback(""), 2500);
   };
 
@@ -224,24 +287,24 @@ export default function ProductDetailsPage() {
       <main className="mx-auto w-full max-w-[1280px] px-4 pb-16 pt-6">
         {loading ? (
           <div className="rounded-2xl border border-[rgba(73,153,173,0.25)] bg-white p-8 text-zinc-600 shadow-[0_16px_40px_-30px_rgba(73,153,173,0.6)]">
-            Loading product...
+            {pdpCopy[locale].loading}
           </div>
         ) : null}
 
         {!loading && error ? (
-          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-rose-700 shadow-sm">{error}</div>
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-rose-700 shadow-sm">{pdpCopy[locale].notFound}</div>
         ) : null}
 
         {!loading && product ? (
           <>
             <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-[rgba(73,153,173,0.2)] bg-white/80 px-3 py-2 text-sm text-zinc-600 backdrop-blur-sm">
-              <Link href="/shop" className="font-semibold transition hover:text-[rgb(60,138,158)]">All products</Link>
+              <Link href="/shop" className="font-semibold transition hover:text-[rgb(60,138,158)]">{pdpCopy[locale].allProducts}</Link>
               <span>&gt;</span>
               <Link
                 href={`/shop?category=${product.category?.slug || ""}`}
                 className="font-semibold transition hover:text-[rgb(60,138,158)]"
               >
-                {product.category?.name[locale] || "Category"}
+                {product.category?.name[locale] || pdpCopy[locale].category}
               </Link>
               <span>&gt;</span>
               <span className="font-semibold text-zinc-900">{title}</span>
@@ -255,7 +318,7 @@ export default function ProductDetailsPage() {
                       type="button"
                       onClick={() => setActiveImageIndex((prev) => (prev - 1 + images.length) % images.length)}
                       className="absolute left-4 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-[rgba(73,153,173,0.35)] bg-white text-[rgb(47,118,135)] shadow-sm transition hover:border-[rgb(73,153,173)] hover:bg-[rgba(73,153,173,0.12)]"
-                      aria-label="Previous image"
+                      aria-label={pdpCopy[locale].prevImage}
                     >
                       <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M12.5 4.5L7 10l5.5 5.5" />
@@ -264,7 +327,7 @@ export default function ProductDetailsPage() {
                   ) : null}
 
                   {currentImage ? (
-                    <img src={currentImage} alt={title} className="h-full w-full object-contain" />
+                    <img src={currentImage} alt={altFor(Math.max(0, images.indexOf(currentImage)))} className="h-full w-full object-contain" />
                   ) : null}
 
                   {images.length > 1 ? (
@@ -272,7 +335,7 @@ export default function ProductDetailsPage() {
                       type="button"
                       onClick={() => setActiveImageIndex((prev) => (prev + 1) % images.length)}
                       className="absolute right-4 top-1/2 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-[rgba(73,153,173,0.35)] bg-white text-[rgb(47,118,135)] shadow-sm transition hover:border-[rgb(73,153,173)] hover:bg-[rgba(73,153,173,0.12)]"
-                      aria-label="Next image"
+                      aria-label={pdpCopy[locale].nextImage}
                     >
                       <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M7.5 4.5L13 10l-5.5 5.5" />
@@ -293,7 +356,7 @@ export default function ProductDetailsPage() {
                           : "border-zinc-200 hover:border-[rgba(73,153,173,0.35)]"
                       }`}
                     >
-                      <img src={image} alt={`${title} ${index + 1}`} className="h-full w-full object-cover" />
+                      <img src={image} alt={altFor(index)} className="h-full w-full object-cover" />
                     </button>
                   ))}
                 </div>
@@ -303,11 +366,38 @@ export default function ProductDetailsPage() {
                 <div className="rounded-3xl border border-[rgba(73,153,173,0.28)] bg-white p-5 shadow-[0_18px_45px_-32px_rgba(73,153,173,0.65)]">
                   <h1 className="text-3xl font-extrabold text-zinc-900 md:text-[2.1rem]">{title}</h1>
 
+                  {isOccasion ? (
                   <div className="mt-5">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-zinc-800">Select your rental period</p>
+                      <p className="text-sm font-semibold text-zinc-800">{pdpCopy[locale].chooseDays}</p>
                       <span className="rounded-full border border-[rgba(73,153,173,0.25)] bg-[rgba(73,153,173,0.12)] px-3 py-1 text-xs font-bold text-[rgb(47,118,135)]">
-                        {durationText(activeDuration, rentalMode)} selected
+                        {shownDuration} {shownDuration === 1 ? pdpCopy[locale].day : pdpCopy[locale].days} {pdpCopy[locale].selected}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {occasionOptions.map((option) => (
+                        <button
+                          key={option.days}
+                          type="button"
+                          onClick={() => setOccasionDays(option.days)}
+                          className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                            option.days === shownDuration
+                              ? "border-[rgb(73,153,173)] bg-[rgba(73,153,173,0.12)] text-[rgb(47,118,135)]"
+                              : "border-zinc-200 text-zinc-600 hover:border-[rgba(73,153,173,0.35)]"
+                          }`}
+                        >
+                          {option.days} {option.days === 1 ? pdpCopy[locale].day : pdpCopy[locale].days}
+                          <span className="block text-xs font-bold">EUR {formatAmount(option.price)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  ) : (
+                  <div className="mt-5">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-zinc-800">{pdpCopy[locale].selectPeriod}</p>
+                      <span className="rounded-full border border-[rgba(73,153,173,0.25)] bg-[rgba(73,153,173,0.12)] px-3 py-1 text-xs font-bold text-[rgb(47,118,135)]">
+                        {durationText(activeDuration, rentalMode, locale)} {pdpCopy[locale].selected}
                       </span>
                     </div>
                     <div className={`mt-3 grid gap-2 ${showWeekly && showMonthly ? "grid-cols-2" : "grid-cols-1"}`}>
@@ -327,7 +417,7 @@ export default function ProductDetailsPage() {
                               : "border-zinc-200 text-zinc-600 hover:border-[rgba(73,153,173,0.35)]"
                           }`}
                         >
-                          Rent by week
+                          {pdpCopy[locale].byWeek}
                         </button>
                       )}
                       {showMonthly && (
@@ -346,7 +436,7 @@ export default function ProductDetailsPage() {
                               : "border-zinc-200 text-zinc-600 hover:border-[rgba(73,153,173,0.35)]"
                           }`}
                         >
-                          Rent by month
+                          {pdpCopy[locale].byMonth}
                         </button>
                       )}
                     </div>
@@ -367,44 +457,67 @@ export default function ProductDetailsPage() {
                       </div>
                     </div>
                     <p className="mt-2 text-xs text-zinc-600">
-                      Selected: {durationText(activeDuration, rentalMode)}
+                      {pdpCopy[locale].selectedLabel} {durationText(activeDuration, rentalMode, locale)}
                     </p>
                   </div>
+                  )}
 
                   <div className="mt-5">
-                    <p className="text-sm font-semibold text-zinc-800">Start date</p>
+                    <p className="text-sm font-semibold text-zinc-800">{pdpCopy[locale].startDate}</p>
                     <input
                       type="date"
                       min={minDeliveryDate}
-                      value={deliveryDate}
+                      value={selectedStartDate}
                       onChange={(event) => setDeliveryDate(event.target.value)}
                       className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-[rgb(73,153,173)]"
                     />
-                    <p className="mt-1 text-xs text-zinc-500">
-                      Earliest available date is {minDeliveryDate} (2 days preparation time).
-                    </p>
+                    <p className="mt-1 text-xs text-zinc-500">{pdpCopy[locale].leadTime(leadDays, minDeliveryDate)}</p>
                   </div>
 
                   <div className="mt-5 border-t border-zinc-200 pt-4">
-                    {hasOffer ? (
-                      <div className="flex items-end gap-2">
-                        <span className="text-2xl text-zinc-400 line-through">EUR {formatAmount(multipliedBuyerPrice)}</span>
-                        <span className="text-4xl font-extrabold text-rose-600">EUR {formatAmount(multipliedOfferPrice)}</span>
-                        <span className="pb-1 text-sm font-semibold text-zinc-700">/{durationText(activeDuration, rentalMode)}</span>
-                      </div>
+                    {isOccasion ? (
+                      <>
+                        <div className="flex items-end gap-2">
+                          <span className="text-4xl font-extrabold text-[rgb(47,118,135)]">{euro(shownPrice, locale)}</span>
+                          <span className="pb-1 text-sm font-semibold text-zinc-700">/ {shownDuration} {shownDuration === 1 ? pdpCopy[locale].day : pdpCopy[locale].days}</span>
+                        </div>
+                        <p className="mt-2 text-sm font-medium text-zinc-800">
+                          {payCopy.occasionLine(euro(product.occasionDailyRate || 0, locale), shownDuration, euro(shownPrice, locale))}
+                        </p>
+                      </>
                     ) : (
-                      <div className="flex items-end gap-2">
-                        <span className="text-4xl font-extrabold text-[rgb(47,118,135)]">EUR {formatAmount(multipliedOfferPrice)}</span>
-                        <span className="pb-1 text-sm font-semibold text-zinc-700">/{durationText(activeDuration, rentalMode)}</span>
-                      </div>
+                      <>
+                        {shownHasOffer ? (
+                          <div className="flex items-end gap-2">
+                            <span className="text-2xl text-zinc-400 line-through">{euro(buyerPrice, locale)}</span>
+                            <span className="text-4xl font-extrabold text-rose-600">{euro(effectiveUnitPrice, locale)}</span>
+                            <span className="pb-1 text-sm font-semibold text-zinc-700">/ {rentalMode === "month" ? payCopy.perMonth : payCopy.perWeek}</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-end gap-2">
+                            <span className="text-4xl font-extrabold text-[rgb(47,118,135)]">{euro(effectiveUnitPrice, locale)}</span>
+                            <span className="pb-1 text-sm font-semibold text-zinc-700">/ {rentalMode === "month" ? payCopy.perMonth : payCopy.perWeek}</span>
+                          </div>
+                        )}
+                        <div className="mt-3 space-y-1 text-sm text-zinc-700">
+                          <p>{payCopy.duration}: <span className="font-semibold text-zinc-900">{durationText(activeDuration, rentalMode, locale)}</span></p>
+                          {isRecurringSelection ? (
+                            <>
+                              <p>{payCopy.dueToday}: <span className="font-semibold text-zinc-900">{euro(effectiveUnitPrice, locale)}{oneTimeFees > 0 ? ` + ${payCopy.oneTimeShort}` : ""}</span></p>
+                              <p>{thenLine(effectiveUnitPrice, rentalMode, activeDuration - 1, locale)}</p>
+                            </>
+                          ) : null}
+                          <p>{payCopy.totalRental}: <span className="font-semibold text-zinc-900">{euro(multipliedOfferPrice, locale)}</span></p>
+                        </div>
+                      </>
                     )}
                     {product.depositEnabled ? (
-                      <p className="mt-2 text-sm text-zinc-600">Security deposit: EUR {formatAmount(product.securityDeposit || 0)}</p>
+                      <p className="mt-2 text-sm text-zinc-600">{pdpCopy[locale].deposit}: EUR {formatAmount(product.securityDeposit || 0)} ({payCopy.oneTimeLabel})</p>
                     ) : null}
                     <p className="mt-2 text-sm text-zinc-600">
-                      Identity verification:{" "}
+                      {pdpCopy[locale].idVerification}:{" "}
                       <span className="font-semibold text-zinc-800">
-                        {product.verificationRequired ? "Required for checkout" : "Not required"}
+                        {product.verificationRequired ? pdpCopy[locale].idRequired : pdpCopy[locale].idNotRequired}
                       </span>
                     </p>
                   </div>
@@ -414,13 +527,13 @@ export default function ProductDetailsPage() {
                     onClick={onAddToCart}
                     className="mt-5 inline-flex w-full items-center justify-center rounded-full bg-[rgb(73,153,173)] px-4 py-3 text-sm font-bold text-white shadow-[0_14px_30px_-20px_rgba(73,153,173,0.9)] transition hover:bg-[rgb(60,138,158)]"
                   >
-                    Add to cart
+                    {pdpCopy[locale].addToCart}
                   </button>
                   {cartFeedback ? (
                     <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-[rgba(73,153,173,0.25)] bg-[rgba(73,153,173,0.12)] px-3 py-2 text-xs font-semibold text-[rgb(47,118,135)]">
                       <span>{cartFeedback}</span>
                       <button type="button" onClick={() => router.push("/cart")} className="underline">
-                        Open cart
+                        {pdpCopy[locale].openCart}
                       </button>
                     </div>
                   ) : null}
@@ -430,20 +543,34 @@ export default function ProductDetailsPage() {
                   <p className="font-semibold">{deliveryLine}</p>
                   <p className="mt-2">{productNotes.delivery}</p>
                   <p className="mt-2">{productNotes.verification}</p>
-                  <p className="mt-2">{productNotes.rentalPeriod}</p>
+                  <p className="mt-2">{isOccasion ? pdpCopy[locale].occasionNote : productNotes.rentalPeriod}</p>
                   <p className="mt-2">{productNotes.rentalUseNotice}</p>
                 </div>
               </div>
             </section>
 
+            {(product.includedItems || []).length > 0 ? (
+              <section className="mt-8 rounded-2xl border border-[rgba(73,153,173,0.24)] bg-white p-5 shadow-[0_16px_36px_-30px_rgba(73,153,173,0.55)]">
+                <h2 className="text-3xl font-extrabold text-zinc-900">{pdpCopy[locale].includedTitle}</h2>
+                <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-zinc-800">
+                  {(product.includedItems || []).map((item, index) => (
+                    <li key={`${item.de}-${index}`}>
+                      {item.quantity > 1 ? `${item.quantity} × ` : ""}
+                      {(locale === "en" ? item.en : item.de) || item.de || item.en}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
             <section className="mt-8 rounded-2xl border border-[rgba(73,153,173,0.24)] bg-white p-5 shadow-[0_16px_36px_-30px_rgba(73,153,173,0.55)]">
-              <h2 className="text-3xl font-extrabold text-zinc-900">Product specifications</h2>
+              <h2 className="text-3xl font-extrabold text-zinc-900">{pdpCopy[locale].specsHeading}</h2>
               {(product.specifications || []).length > 0 ? (
                 <div className="mt-5 space-y-4">
                   {visibleSpecs.map((spec, index) => (
                     <div key={`${spec.key}-${index}`} className="grid grid-cols-[160px_1fr] gap-4 text-sm">
-                      <p className="font-bold uppercase tracking-wide text-zinc-600">{spec.key}</p>
-                      <p className="text-zinc-800">{spec.value}</p>
+                      <p className="font-bold uppercase tracking-wide text-zinc-600">{locale === "en" && spec.keyEn ? spec.keyEn : spec.key}</p>
+                      <p className="text-zinc-800">{locale === "en" && spec.valueEn ? spec.valueEn : spec.value}</p>
                     </div>
                   ))}
                   {(product.specifications || []).length > 3 ? (
@@ -452,18 +579,18 @@ export default function ProductDetailsPage() {
                       onClick={() => setShowAllSpecs((prev) => !prev)}
                       className="pt-2 text-sm font-semibold text-[rgb(47,118,135)] underline"
                     >
-                      {showAllSpecs ? "Show less" : "Show more"}
+                      {showAllSpecs ? pdpCopy[locale].showLess : pdpCopy[locale].showMore}
                     </button>
                   ) : null}
                 </div>
               ) : (
-                <p className="mt-4 text-sm text-zinc-600">Specifications will be updated soon.</p>
+                <p className="mt-4 text-sm text-zinc-600">{pdpCopy[locale].specsSoon}</p>
               )}
             </section>
 
             {description ? (
               <section className="mt-8 rounded-2xl border border-[rgba(73,153,173,0.24)] bg-white p-5 shadow-[0_16px_36px_-30px_rgba(73,153,173,0.55)]">
-                <h2 className="text-3xl font-extrabold text-zinc-900">Description</h2>
+                <h2 className="text-3xl font-extrabold text-zinc-900">{pdpCopy[locale].descHeading}</h2>
                 <div className="prose mt-4 max-w-none text-zinc-700" dangerouslySetInnerHTML={{ __html: description }} />
               </section>
             ) : null}
@@ -471,13 +598,13 @@ export default function ProductDetailsPage() {
             {related.length > 0 ? (
               <section className="mt-10">
                 <div className="mb-5 flex items-end justify-between">
-                  <h2 className="text-4xl font-extrabold text-zinc-900">We think you may also like</h2>
+                  <h2 className="text-4xl font-extrabold text-zinc-900">{pdpCopy[locale].alsoLike}</h2>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => scrollRelated("left")}
                       className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-300 text-zinc-700 transition hover:border-[rgb(73,153,173)] hover:text-[rgb(47,118,135)]"
-                      aria-label="Scroll related left"
+                      aria-label={pdpCopy[locale].scrollLeft}
                     >
                       <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M12.5 4.5L7 10l5.5 5.5" />
@@ -487,7 +614,7 @@ export default function ProductDetailsPage() {
                       type="button"
                       onClick={() => scrollRelated("right")}
                       className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-300 text-zinc-700 transition hover:border-[rgb(73,153,173)] hover:text-[rgb(47,118,135)]"
-                      aria-label="Scroll related right"
+                      aria-label={pdpCopy[locale].scrollRight}
                     >
                       <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M7.5 4.5L13 10l-5.5 5.5" />

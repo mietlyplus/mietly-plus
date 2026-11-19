@@ -17,6 +17,8 @@ const draftImageSchema = new mongoose.Schema(
     providerId: { type: String, default: "", trim: true },
     model: { type: String, default: "", trim: true },
     isFixture: { type: Boolean, default: false },
+    // Free-text provenance: a license, or who made the photo.
+    provenanceNote: { type: String, default: "", trim: true },
     status: { type: String, enum: ["pending", "generating", "ready", "failed"], default: "ready" },
     error: { type: String, default: "", trim: true },
     // Lease for an in-flight generation, so a duplicate request cannot pay for
@@ -50,6 +52,9 @@ const productDraftSchema = new mongoose.Schema(
     createdByAdminId: { type: mongoose.Schema.Types.ObjectId, ref: "Admin", required: true, index: true },
 
     sourceUrl: { type: String, default: "", trim: true },
+    // "link" = created from a product URL; "package" = imported from a prepared AI Product Package.
+    origin: { type: String, enum: ["link", "package"], default: "link" },
+    packageId: { type: mongoose.Schema.Types.ObjectId, ref: "ProductPackage", default: null },
     // Admin-entered rental rates. Authoritative; never derived from the source.
     weeklyPrice: { type: Number, default: 0, min: 0 },
     monthlyPrice: { type: Number, default: 0, min: 0 },

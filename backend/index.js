@@ -23,18 +23,29 @@ const BlogPost = require("./models/BlogPost");
 const SupportRequest = require("./models/SupportRequest");
 const Order = require("./models/Order");
 const ProductDraft = require("./models/ProductDraft");
+const StripeWebhookEvent = require("./models/StripeWebhookEvent");
+const { getProductRentalLimits, getOccasionDailyRate, getOccasionOptions, priceOrderItem, sumOrderTotals } = require("./lib/pricing");
+const { planBilling } = require("./lib/billing");
+const {
+  RECURRING_EVENT_TYPES,
+  activateRecurringOrder,
+  ensureFixedTermSchedule,
+  idOf,
+  metadataOfEvent,
+  nextBillingDateOfInvoice,
+  recordFailedPayment,
+  recordPaidInvoice,
+  recordSubscriptionEnded,
+  subscriptionIdOfEvent,
+} = require("./lib/recurring-billing");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const upload = multer({ storage: multer.memoryStorage() });
-const IS_PRODUCTION_RUNTIME = process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
-if (IS_PRODUCTION_RUNTIME && !String(process.env.JWT_SECRET || "").trim()) {
-  // A built-in fallback secret would let anyone forge admin tokens.
-  throw new Error("JWT_SECRET must be set in production.");
-}
-const JWT_SECRET = process.env.JWT_SECRET || "super_secret_change_me";
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
+const stripeWebhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+const STRIPE_WEBHOOK_PATH = "/api/payments/stripe-webhook";
 const VALID_FULFILLMENT_STATUSES = ["pending", "processing", "shipped", "delivered", "cancelled", "returned"];
 const WEBSITE_CURRENCY = "eur";
 const PRODUCT_IMAGE_PLACEHOLDER =
@@ -93,7 +104,14 @@ if (hasCloudinaryConfig) {
 }
 
 app.use(cors());
-app.use(express.json());
+
+// Stripe signature verification needs the exact bytes Stripe signed, so the
+// webhook route is excluded from JSON parsing and buffered raw instead.
+app.use(STRIPE_WEBHOOK_PATH, express.raw({ type: "*/*", limit: "1mb" }));
+app.use((req, res, next) => {
+  if (req.path === STRIPE_WEBHOOK_PATH) return next();
+  return express.json()(req, res, next);
+});
 
 let appInitPromise = null;
 
@@ -109,6 +127,29 @@ async function initializeApp() {
 }
 
 
+// JWT signing/verification has no safe default. A missing secret must disable
+// authentication entirely rather than fall back to a guessable value. The check
+// is done per request (not at module load) so serverless cold starts and the
+// unauthenticated storefront routes still initialize normally.
+function isJwtSecretConfigured() {
+  return Boolean(String(process.env.JWT_SECRET || "").trim());
+}
+
+function getJwtSecret() {
+  const secret = String(process.env.JWT_SECRET || "").trim();
+  if (!secret) {
+    throw new Error("JWT_SECRET is not configured.");
+  }
+  return secret;
+}
+
+function rejectWhenJwtSecretMissing(res) {
+  if (isJwtSecretConfigured()) return false;
+  console.error("JWT_SECRET is not configured. Authentication is disabled.");
+  res.status(500).json({ message: "Authentication is not configured on the server." });
+  return true;
+}
+
 function buildAdminToken(admin) {
 
   return jwt.sign(
@@ -118,7 +159,7 @@ function buildAdminToken(admin) {
       role: "admin",
       name: admin.name,
     },
-    JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: "7d" }
   );
 }
@@ -131,12 +172,14 @@ function buildUserToken(user) {
       role: "user",
       name: user.name,
     },
-    JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: "7d" }
   );
 }
 
 async function requireAdminAuth(req, res, next) {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   const authHeader = req.headers.authorization || "";
   if (!authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ message: "Unauthorized." });
@@ -145,7 +188,7 @@ async function requireAdminAuth(req, res, next) {
   const token = authHeader.replace("Bearer ", "");
   let payload;
   try {
-    payload = jwt.verify(token, JWT_SECRET);
+    payload = jwt.verify(token, getJwtSecret());
   } catch {
     return res.status(401).json({ message: "Invalid token." });
   }
@@ -165,6 +208,8 @@ async function requireAdminAuth(req, res, next) {
 }
 
 function requireUserAuth(req, res, next) {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   const authHeader = req.headers.authorization || "";
   if (!authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ message: "Unauthorized." });
@@ -172,7 +217,7 @@ function requireUserAuth(req, res, next) {
 
   const token = authHeader.replace("Bearer ", "");
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, getJwtSecret());
     if (payload.role !== "user") {
       return res.status(403).json({ message: "Forbidden." });
     }
@@ -216,6 +261,14 @@ function getFrontendBaseUrl() {
     process.env.NEXT_PUBLIC_APP_URL ||
     "http://localhost:3000"
   );
+}
+
+// In production a missing site URL would send customers back to localhost after
+// paying. Checkout refuses to start instead of building those return URLs.
+function isFrontendUrlConfigured() {
+  const onProduction = process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
+  if (!onProduction) return true;
+  return Boolean(process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL);
 }
 
 function normalizeAddressInput(rawAddress) {
@@ -787,7 +840,7 @@ async function runRentalEndingReminderSweep() {
 
   const targetDateKey = target.toISOString().slice(0, 10);
   const orders = await Order.find({
-    paymentStatus: "paid",
+    paymentStatus: { $in: ["paid", "partially_paid"] },
     status: { $ne: "cancelled" },
     fulfillmentStatus: { $nin: ["cancelled", "returned"] },
   }).select(
@@ -970,6 +1023,7 @@ function mapProduct(product) {
     maximumRentalDays: maxDays,
     rentalPeriodUnit: product.rentalPeriodUnit || "week",
     deliveryFee: product.deliveryFee || 0,
+    deliveryLeadDays: Number.isInteger(product.deliveryLeadDays) ? product.deliveryLeadDays : 2,
     verificationRequired: product.verificationRequired !== false,
     depositEnabled: Boolean(product.depositEnabled),
     securityDeposit: product.securityDeposit || 0,
@@ -977,6 +1031,15 @@ function mapProduct(product) {
     refundable: Boolean(product.refundable),
     specifications: product.specifications || [],
     seo: product.seo || {},
+    rentalMode: product.rentalMode || "standard",
+    occasionDailyRate: getOccasionDailyRate(product),
+    // Derived (daily rate x 1..7 days) so the storefront shows what is charged.
+    occasionPricing: getOccasionOptions(product),
+    model: product.model || "",
+    series: product.series || "",
+    identifiers: { ean: product.identifiers?.ean || "", gtin: product.identifiers?.gtin || "", mpn: product.identifiers?.mpn || "" },
+    includedItems: (product.includedItems || []).map((i) => ({ de: i.de || "", en: i.en || "", quantity: i.quantity || 1 })),
+    imageAlts: (product.imageAlts || []).map((a) => ({ de: a.de || "", en: a.en || "" })),
     isMostPopular: Boolean(product.isMostPopular),
     isActive: Boolean(product.isActive),
     createdAt: product.createdAt,
@@ -1101,6 +1164,7 @@ function mapOrder(order) {
           lineDeposit: item.lineDeposit || 0,
           lineDelivery: item.lineDelivery || 0,
           lineTotal: item.lineTotal || 0,
+          billingType: item.billingType || "one_time",
         }))
       : [],
     currency: WEBSITE_CURRENCY.toUpperCase(),
@@ -1111,6 +1175,24 @@ function mapOrder(order) {
     status: order.status || "pending_payment",
     fulfillmentStatus: order.fulfillmentStatus || "pending",
     paymentStatus: order.paymentStatus || "unpaid",
+    // One-time orders (all historical orders) have no recurring block.
+    billingMode: order.billingMode || "one_time",
+    recurring: order.recurring
+      ? {
+          interval: order.recurring.interval,
+          billingCycles: order.recurring.billingCycles,
+          successfulCycles: order.recurring.successfulCycles || 0,
+          recurringAmount: order.recurring.recurringAmount || 0,
+          totalRentalCommitment: order.recurring.totalRentalCommitment || 0,
+          oneTimeCharges: order.recurring.oneTimeCharges || 0,
+          dueToday: order.recurring.dueToday || 0,
+          nextBillingDate: order.recurring.nextBillingDate ? new Date(order.recurring.nextBillingDate).toISOString() : "",
+          status: order.recurring.status || "pending",
+          lastPaymentAt: order.recurring.lastPaymentAt ? new Date(order.recurring.lastPaymentAt).toISOString() : "",
+        }
+      : null,
+    stripeSubscriptionId: order.stripeSubscriptionId || "",
+    stripeSubscriptionScheduleId: order.stripeSubscriptionScheduleId || "",
     stripeCheckoutSessionId: order.stripeCheckoutSessionId || "",
     stripePaymentIntentId: order.stripePaymentIntentId || "",
     rentalEndDate: rentalEndDate ? rentalEndDate.toISOString() : "",
@@ -1276,6 +1358,8 @@ function recordAdminLoginFailure(key) {
 }
 
 app.post("/api/admin/auth/login", async (req, res) => {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   // Sign in with a username or an email address.
   const identifier = String(req.body?.identifier || req.body?.username || req.body?.email || "").trim().toLowerCase();
   const password = String(req.body?.password || "").trim();
@@ -2057,6 +2141,7 @@ app.post("/api/admin/products", requireAdminAuth, async (req, res) => {
     maximumRentalDays = 30,
     rentalPeriodUnit = "week",
     deliveryFee = 0,
+    deliveryLeadDays: createLeadDays,
     verificationRequired = true,
     depositEnabled = false,
     securityDeposit = 0,
@@ -2154,6 +2239,8 @@ app.post("/api/admin/products", requireAdminAuth, async (req, res) => {
       ? String(rentalPeriodUnit)
       : "week",
     deliveryFee: Math.max(0, Number(deliveryFee) || 0),
+    ...(parseDeliveryLeadDays(createLeadDays) !== null ? { deliveryLeadDays: parseDeliveryLeadDays(createLeadDays) } : {}),
+    
     verificationRequired: Boolean(verificationRequired),
     depositEnabled: Boolean(depositEnabled),
     securityDeposit: Boolean(depositEnabled) ? Number(securityDeposit) || 0 : 0,
@@ -2186,6 +2273,39 @@ app.post("/api/admin/products", requireAdminAuth, async (req, res) => {
     .populate("categoryId", "name slug")
     .populate("brandId", "name slug image");
   return res.status(201).json(mapProduct(populated));
+});
+
+// Rental terms the owner can change without re-importing anything: the day-based
+// prices of an occasion product and the delivery lead time of any product.
+app.patch("/api/admin/products/:id/rental-terms", requireAdminAuth, async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ message: "Product not found." });
+  const product = await Product.findById(req.params.id);
+  if (!product) return res.status(404).json({ message: "Product not found." });
+
+  if (req.body?.occasionDailyRate !== undefined || req.body?.occasionPricing !== undefined) {
+    if (product.rentalMode !== "occasion") {
+      return res.status(400).json({ message: "A daily price applies to occasion products only." });
+    }
+    const checked =
+      req.body.occasionDailyRate !== undefined
+        ? normalizeDailyRate(req.body.occasionDailyRate)
+        : dailyRateFromLegacyOptions(req.body.occasionPricing);
+    if (checked.errors.length) return res.status(400).json({ message: checked.errors[0], errors: checked.errors });
+    product.occasionDailyRate = checked.rate;
+    product.occasionPricing = [];
+  }
+  if (req.body?.deliveryLeadDays !== undefined) {
+    const days = parseDeliveryLeadDays(req.body.deliveryLeadDays);
+    if (days === null) return res.status(400).json({ message: "deliveryLeadDays must be a whole number from 0 to 30." });
+    product.deliveryLeadDays = days;
+  }
+  await product.save();
+  return res.json({
+    rentalMode: product.rentalMode,
+    occasionDailyRate: getOccasionDailyRate(product),
+    occasionPricing: getOccasionOptions(product),
+    deliveryLeadDays: product.deliveryLeadDays,
+  });
 });
 
 app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
@@ -2229,6 +2349,9 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
     maximumRentalDays = 30,
     rentalPeriodUnit = "week",
     deliveryFee = 0,
+    deliveryLeadDays,
+    rentalMode,
+    occasionDailyRate,
     verificationRequired = true,
     depositEnabled = false,
     securityDeposit = 0,
@@ -2244,6 +2367,26 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
     return res.status(400).json({
       message: "title (or titleI18n.en), slug, imageUrl, categoryId, brandId, monthlyPrice are required.",
     });
+  }
+
+  // Rental mode, day prices and lead time are optional here: the standard editor
+  // does not send them, and then they are left exactly as they are.
+  const nextRentalMode = rentalMode === undefined ? product.rentalMode || "standard" : String(rentalMode);
+  if (!["standard", "occasion"].includes(nextRentalMode)) {
+    return res.status(400).json({ message: "rentalMode must be standard or occasion." });
+  }
+  let nextDailyRate = null;
+  if (occasionDailyRate !== undefined) {
+    const checked = normalizeDailyRate(occasionDailyRate);
+    if (nextRentalMode === "occasion" && checked.errors.length) {
+      return res.status(400).json({ message: checked.errors[0], errors: checked.errors });
+    }
+    nextDailyRate = nextRentalMode === "occasion" ? checked.rate : 0;
+  }
+  let nextLeadDays = null;
+  if (deliveryLeadDays !== undefined) {
+    nextLeadDays = parseDeliveryLeadDays(deliveryLeadDays);
+    if (nextLeadDays === null) return res.status(400).json({ message: "deliveryLeadDays must be a whole number from 0 to 30." });
   }
 
   const minimumRentalMonthsValue = toPositiveNumber(minimumRentalMonths, 1);
@@ -2327,17 +2470,32 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
     ? String(rentalPeriodUnit)
     : "week";
   product.deliveryFee = Math.max(0, Number(deliveryFee) || 0);
+  if (nextLeadDays !== null) product.deliveryLeadDays = nextLeadDays;
+  product.rentalMode = nextRentalMode;
+  if (nextDailyRate !== null) {
+    product.occasionDailyRate = nextDailyRate;
+    product.occasionPricing = [];
+  }
   product.verificationRequired = Boolean(verificationRequired);
   product.depositEnabled = Boolean(depositEnabled);
   product.securityDeposit = Boolean(depositEnabled) ? Number(securityDeposit) || 0 : 0;
   product.replacementValue = Number(replacementValue) || 0;
   product.refundable = Boolean(refundable);
+  // English wording of a specification survives an edit from a form that only
+  // knows the main key/value: it is kept when the incoming row has none.
+  const existingSpecs = new Map((product.specifications || []).map((spec) => [spec.key, spec]));
   product.specifications = Array.isArray(specifications)
     ? specifications
-        .map((spec) => ({
-          key: String(spec?.key || "").trim(),
-          value: String(spec?.value || "").trim(),
-        }))
+        .map((spec) => {
+          const key = String(spec?.key || "").trim();
+          const previous = existingSpecs.get(key);
+          return {
+            key,
+            value: String(spec?.value || "").trim(),
+            keyEn: String(spec?.keyEn ?? previous?.keyEn ?? "").trim(),
+            valueEn: String(spec?.valueEn ?? previous?.valueEn ?? "").trim(),
+          };
+        })
         .filter((spec) => spec.key && spec.value)
     : [];
   product.seo = {
@@ -2359,6 +2517,12 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
   // Manual and CSV products have no draft and are unaffected.
   const wasActive = product.isActive === true;
   const wantsActive = Boolean(isActive);
+  if (nextRentalMode === "occasion" && wantsActive) {
+    const effective = nextDailyRate ?? getOccasionDailyRate(product);
+    if (!(effective > 0)) {
+      return res.status(400).json({ message: "An occasion product needs a daily price greater than 0 to be active." });
+    }
+  }
 
   if (!wasActive && wantsActive) {
     const linkedDraft = await ProductDraft.findOne({ productId: product._id, status: { $ne: "discarded" } });
@@ -2877,6 +3041,236 @@ app.get("/api/admin/product-drafts/:id", requireAdminAuth, async (req, res) => {
 });
 
 // Step 1: extract + generate text + create the private Product.
+// ---------------------------------------------------------------------------
+// AI Product Queue: prepared product packages (JSON) -> private drafts.
+// Nothing here publishes. Import creates an inactive Product plus a draft, which
+// goes through the same review and explicit publication as every other draft.
+// ---------------------------------------------------------------------------
+const ProductPackage = require("./models/ProductPackage");
+const { normalizeDailyRate, dailyRateFromLegacyOptions } = require("./lib/occasion-pricing");
+const { parseDeliveryLeadDays, checkStartDate } = require("./lib/delivery-lead-time");
+const { validateProductPackage, buildPackageProductPayload } = require("./lib/product-package");
+const { buildSlug: buildPackageSlug, matchCategory: matchPackageCategory, matchBrand: matchPackageBrand } = require("./lib/product-payload");
+
+const PACKAGE_UPLOAD_LIMIT = 25;
+const PACKAGE_IMPORT_BUDGET_MS = 40 * 1000;
+const PACKAGE_DRAFT_IMAGE_CAP = 5;
+
+function summarisePackage(doc) {
+  return {
+    id: String(doc._id),
+    externalId: doc.externalId,
+    title: doc.title,
+    rentalMode: doc.rentalMode,
+    status: doc.status,
+    errors: doc.problems || [],
+    warnings: doc.warnings || [],
+    imageCount: (doc.payload?.images || []).length,
+    importedDraftId: doc.importedDraftId ? String(doc.importedDraftId) : null,
+    importedProductId: doc.importedProductId ? String(doc.importedProductId) : null,
+    importedAt: doc.importedAt,
+    updatedAt: doc.updatedAt,
+  };
+}
+
+// Images hosted on our own Cloudinary account are kept as they are; any other
+// https image is downloaded under the same SSRF and size limits as the link
+// workflow and re-hosted, so a listing never depends on someone else's server.
+async function hostPackageImage(image) {
+  const url = image.url;
+  if (/^https:\/\/res\.cloudinary\.com\//i.test(url)) return url;
+  const fetched = await fetchImageAsBase64(url);
+  if (!fetched) throw new Error(`Could not download ${url}`);
+  return uploadGeneratedImage(fetched.base64, fetched.mimeType);
+}
+
+async function importPackage(doc, adminId) {
+  const pkg = doc.payload;
+  const extraWarnings = [];
+
+  const hosted = [];
+  const orderedImages = [...pkg.images].sort((a, b) => Number(b.primary) - Number(a.primary));
+  for (const image of orderedImages) {
+    if (hosted.length >= PACKAGE_DRAFT_IMAGE_CAP) {
+      extraWarnings.push(`Only ${PACKAGE_DRAFT_IMAGE_CAP} images are imported per listing; the rest were left out.`);
+      break;
+    }
+    if (!image.url) {
+      extraWarnings.push(`An uploaded image (${image.file}) was not uploaded with the package and was skipped.`);
+      continue;
+    }
+    try {
+      hosted.push({ ...image, hostedUrl: await hostPackageImage(image) });
+    } catch (error) {
+      extraWarnings.push(`An image could not be imported and was skipped: ${error.message}`);
+    }
+  }
+
+  const catalogue = await loadCatalogueForMatching();
+  const category = matchPackageCategory(pkg.identity.category.name, catalogue.categories);
+  const brand = matchPackageBrand(pkg.identity.brand, catalogue.brands);
+  // Only a clear match is applied. Anything weaker stays unresolved so the owner
+  // chooses; a package never creates a category or brand on its own.
+  const categoryId = category.confidence === "high" ? category.categoryId : null;
+  const brandId = brand.confidence === "high" ? brand.brandId : null;
+
+  const slug = await ensureUniqueSlug(buildPackageSlug([pkg.identity.brand, pkg.identity.model || pkg.titles.de || pkg.titles.en], pkg.externalId));
+  const payload = buildPackageProductPayload(pkg, {
+    categoryId,
+    brandId,
+    brandName: brand.brandName,
+    images: hosted.map((image) => ({ url: image.hostedUrl, altDe: image.altDe, altEn: image.altEn })),
+    slug,
+  });
+  if (!payload.imageUrl) payload.imageUrl = PRODUCT_IMAGE_PLACEHOLDER;
+
+  const draftWarnings = [
+    ...pkg.warnings.map((message) => ({ code: "package_note", field: "", message })),
+    ...extraWarnings.map((message) => ({ code: "package_import", field: "", message })),
+    ...doc.warnings.map((message) => ({ code: "package_validation", field: "", message })),
+  ];
+  if (!categoryId) {
+    draftWarnings.push({ code: "category_unresolved", field: "category", message: `Category "${pkg.identity.category.name || "(none given)"}" matched no existing category. Choose one when reviewing.` });
+  }
+  if (!brandId) {
+    draftWarnings.push({ code: "brand_unresolved", field: "brand", message: `Brand "${pkg.identity.brand || "(none given)"}" matched no existing brand. Choose one when reviewing.` });
+  }
+
+  const specText = pkg.specifications.map((s) => `${s.key}: ${s.value}`).join("\n");
+  const sourceText = pkg.sources.map((s) => [s.type, s.label, s.url, s.note].filter(Boolean).join(" ")).join("\n");
+
+  let product = null;
+  let draft = null;
+  try {
+  product = await Product.create(payload);
+  draft = await ProductDraft.create({
+    productId: product._id,
+    createdByAdminId: adminId,
+    origin: "package",
+    packageId: doc._id,
+    sourceUrl: pkg.sources.find((s) => s.url)?.url || "",
+    weeklyPrice: pkg.pricing.weekly || 0,
+    monthlyPrice: pkg.pricing.monthly || 0,
+    instruction: "",
+    // The package itself is the verified source. This is what lets the
+    // publication rules accept it; an empty package would not get here.
+    pastedDetails: [`Prepared product package ${pkg.externalId}.`, specText, sourceText].filter(Boolean).join("\n").slice(0, 8000),
+    taxonomyConfirmed: Boolean(categoryId && brandId),
+    status: "ready",
+    steps: {
+      extraction: { status: "skipped" },
+      text: { status: "done", completedAt: new Date() },
+      images: { status: "skipped" },
+    },
+    images: hosted.map((image) => ({
+      url: image.hostedUrl,
+      origin: image.origin === "ai_generated" ? "ai" : "user",
+      role: image.role || (image.origin === "licensed_asset" ? "licensed-asset" : image.origin === "ai_generated" ? "ai-generated" : "owner-photo"),
+      provenanceNote: [image.origin, image.license, image.note].filter(Boolean).join(" | "),
+      providerId: image.origin === "ai_generated" ? "chatgpt" : "",
+      status: "ready",
+    })),
+    warnings: draftWarnings,
+    providers: { text: { id: "chatgpt-package", model: "", real: true }, image: { id: "", model: "", real: true } },
+    provenance: {
+      extractedFacts: { productName: pkg.titles.de || pkg.titles.en, fromPackage: true },
+      sourceImages: pkg.referenceImages.map((ref) => ref.url),
+      usedStrategies: ["package"],
+    },
+  });
+
+  doc.status = "imported";
+  doc.importedProductId = product._id;
+  doc.importedDraftId = draft._id;
+  doc.importedAt = new Date();
+  await doc.save();
+  } catch (error) {
+    // No orphan: whatever was created for this attempt is removed again, and the
+    // package stays READY so it can be retried.
+    if (draft) await ProductDraft.deleteOne({ _id: draft._id }).catch(() => {});
+    if (product) await Product.deleteOne({ _id: product._id }).catch(() => {});
+    throw error;
+  }
+  return { draftId: String(draft._id), productId: String(product._id) };
+}
+
+app.post("/api/admin/product-packages", requireAdminAuth, async (req, res) => {
+  const incoming = Array.isArray(req.body?.packages) ? req.body.packages : req.body?.package ? [req.body.package] : [];
+  if (incoming.length === 0) return res.status(400).json({ message: "Send one or more packages." });
+  if (incoming.length > PACKAGE_UPLOAD_LIMIT) {
+    return res.status(400).json({ message: `At most ${PACKAGE_UPLOAD_LIMIT} packages per upload.` });
+  }
+
+  const results = [];
+  for (const raw of incoming) {
+    const checked = validateProductPackage(raw);
+    const externalId = checked.package?.externalId || "";
+    if (!externalId) {
+      results.push({ externalId: "", status: "invalid", errors: checked.errors, warnings: checked.warnings });
+      continue;
+    }
+    const existing = await ProductPackage.findOne({ externalId });
+    if (existing?.status === "imported") {
+      results.push({
+        externalId, status: "imported", id: String(existing._id),
+        errors: ["This package was already imported. Edit the draft instead, or use a new externalId."], warnings: [],
+      });
+      continue;
+    }
+    const doc = existing || new ProductPackage({ externalId, createdByAdminId: req.admin.sub });
+    doc.title = checked.package.titles.de || checked.package.titles.en;
+    doc.rentalMode = checked.package.rentalMode;
+    doc.status = checked.ok ? "ready" : "invalid";
+    doc.problems = checked.errors;
+    doc.warnings = checked.warnings;
+    doc.payload = checked.package;
+    await doc.save();
+    results.push(summarisePackage(doc));
+  }
+  return res.status(201).json({ results });
+});
+
+app.get("/api/admin/product-packages", requireAdminAuth, async (_req, res) => {
+  const docs = await ProductPackage.find().sort({ updatedAt: -1 }).limit(200);
+  return res.json({ items: docs.map(summarisePackage) });
+});
+
+app.post("/api/admin/product-packages/import", requireAdminAuth, async (req, res) => {
+  const allReady = req.body?.allReady === true;
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter((id) => mongoose.Types.ObjectId.isValid(id)) : [];
+  if (!allReady && ids.length === 0) return res.status(400).json({ message: "Select packages to import." });
+
+  const docs = await ProductPackage.find(allReady ? { status: "ready" } : { _id: { $in: ids }, status: "ready" }).sort({ createdAt: 1 });
+  const started = Date.now();
+  const imported = [];
+  const failed = [];
+  let remaining = 0;
+
+  for (const doc of docs) {
+    // Stay under the function time limit; the client calls again for the rest.
+    if (Date.now() - started > PACKAGE_IMPORT_BUDGET_MS) {
+      remaining += 1;
+      continue;
+    }
+    try {
+      const result = await importPackage(doc, req.admin.sub);
+      imported.push({ id: String(doc._id), externalId: doc.externalId, ...result });
+    } catch (error) {
+      console.error("Package import failed:", error.message);
+      failed.push({ id: String(doc._id), externalId: doc.externalId, message: "Import failed. Nothing was published." });
+    }
+  }
+  return res.json({ imported, failed, remaining });
+});
+
+app.delete("/api/admin/product-packages/:id", requireAdminAuth, async (req, res) => {
+  const doc = await ProductPackage.findById(req.params.id);
+  if (!doc) return res.status(404).json({ message: "Package not found." });
+  if (doc.status === "imported") return res.status(409).json({ message: "An imported package stays as a record of its draft." });
+  await ProductPackage.deleteOne({ _id: doc._id });
+  return res.json({ message: "Package removed." });
+});
+
 app.post("/api/admin/product-drafts", requireAdminAuth, async (req, res) => {
   const sourceUrl = String(req.body?.sourceUrl || "").trim();
   const weeklyPrice = Number(req.body?.weeklyPrice);
@@ -3689,6 +4083,8 @@ app.post("/api/auth/signup/request-otp", async (req, res) => {
 });
 
 app.post("/api/auth/signup/verify-otp", async (req, res) => {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   const email = String(req.body?.email || "").trim().toLowerCase();
   const otp = String(req.body?.otp || "").trim();
 
@@ -3759,6 +4155,8 @@ app.post("/api/auth/signup", async (req, res) => {
 });
 
 app.post("/api/auth/signin", async (req, res) => {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   const email = String(req.body?.email || "").trim().toLowerCase();
   const password = String(req.body?.password || "").trim();
   if (!email || !password) {
@@ -3794,6 +4192,8 @@ app.post("/api/auth/signin", async (req, res) => {
 });
 
 app.post("/api/auth/google", async (req, res) => {
+  if (rejectWhenJwtSecretMissing(res)) return undefined;
+
   const credential = String(req.body?.credential || req.body?.idToken || "").trim();
   if (!credential) {
     return res.status(400).json({ message: "Google credential is required." });
@@ -3952,6 +4352,10 @@ app.get("/api/payments/identity-status", requireUserAuth, async (req, res) => {
   if (!stripe) {
     return res.status(500).json({ message: "Stripe is not configured." });
   }
+  if (!isFrontendUrlConfigured()) {
+    console.error("FRONTEND_URL is not configured; refusing to start checkout.");
+    return res.status(500).json({ message: "Checkout is not configured yet." });
+  }
 
   const user = await User.findById(req.userAuth.sub);
   if (!user) {
@@ -4010,6 +4414,274 @@ app.post("/api/payments/identity-session", requireUserAuth, async (req, res) => 
   });
 });
 
+function formatRentalPeriodLabel(durationValue, durationUnit) {
+  const plural = durationValue === 1 ? "" : "s";
+  return `${durationValue} ${durationUnit}${plural}`;
+}
+
+function isValidStartDate(value) {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
+  const parsed = new Date(`${raw}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime());
+}
+
+// Fields required to price a line and to snapshot it onto the order.
+const CHECKOUT_PRODUCT_FIELDS = [
+  "title",
+  "slug",
+  "imageUrl",
+  "brand",
+  "isActive",
+  "monthlyPrice",
+  "buyerPrice",
+  "offerPrice",
+  "monthlyBuyerPrice",
+  "monthlyOfferPrice",
+  "rentalMode",
+  "occasionDailyRate",
+  "occasionPricing",
+  "deliveryLeadDays",
+  "minimumRentalMonths",
+  "maximumRentalMonths",
+  "minimumRentalWeeks",
+  "maximumRentalWeeks",
+  "minimumRentalDays",
+  "maximumRentalDays",
+  "maxRentalQuantity",
+  "deliveryFee",
+  "depositEnabled",
+  "securityDeposit",
+  "verificationRequired",
+  "categoryId",
+  "brandId",
+].join(" ");
+
+// Reads the non-chargeable intent out of a cart payload. Amount-bearing fields
+// in the request are deliberately not looked at here or anywhere downstream.
+function parseCartIntent(items, { requireStartDate }) {
+  const requestedLines = [];
+  const errors = [];
+
+  items.forEach((item, index) => {
+    const position = index + 1;
+    const productId = String(item?.productId || "").trim();
+    const lineId = String(item?.id || item?.lineId || "").trim() || `line-${position}`;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      errors.push({
+        lineId,
+        productId,
+        code: "INVALID_PRODUCT_REFERENCE",
+        message: `Cart line ${position} is missing a valid product reference.`,
+      });
+      return;
+    }
+
+    const startDate = String(item?.startDate || "").trim();
+    if (requireStartDate && !isValidStartDate(startDate)) {
+      errors.push({
+        lineId,
+        productId,
+        code: "INVALID_START_DATE",
+        message: `Cart line ${position} needs a valid delivery date (YYYY-MM-DD).`,
+      });
+      return;
+    }
+
+    requestedLines.push({
+      lineId,
+      productId,
+      startDate,
+      periodUnit: item?.durationUnit ?? item?.periodUnit,
+      durationValue: item?.durationValue,
+      quantity: item?.quantity,
+    });
+  });
+
+  return { requestedLines, errors };
+}
+
+async function loadCartProducts(requestedLines) {
+  const productIds = [...new Set(requestedLines.map((line) => line.productId))];
+  if (productIds.length === 0) return new Map();
+
+  const products = await Product.find({ _id: { $in: productIds } })
+    .select(CHECKOUT_PRODUCT_FIELDS)
+    .populate("categoryId", "name slug")
+    .populate("brandId", "name slug")
+    .lean();
+
+  return new Map(products.map((product) => [String(product._id), product]));
+}
+
+function buildProductSnapshot(product) {
+  const rawCategory = product.categoryId;
+  const rawBrand = product.brandId;
+  return {
+    productId: String(product._id),
+    title: String(product.title || ""),
+    slug: String(product.slug || ""),
+    imageUrl: String(product.imageUrl || ""),
+    categoryName:
+      rawCategory && typeof rawCategory === "object" ? String(rawCategory.name?.en || "") : "",
+    brandName:
+      String(product.brand || "") ||
+      (rawBrand && typeof rawBrand === "object" ? String(rawBrand.name || "") : ""),
+  };
+}
+
+// Single pricing pass shared by the quote endpoint and checkout. `lines` is
+// always one entry per requested line (valid or not) so a client can render the
+// authoritative state of the whole cart; `pricedItems` holds only valid lines.
+function priceCartLines(requestedLines, productById) {
+  const lines = [];
+  const pricedItems = [];
+  const errors = [];
+
+  for (const line of requestedLines) {
+    const product = productById.get(line.productId) || null;
+    const limits = getProductRentalLimits(product, line.periodUnit);
+    const priced = priceOrderItem(product, {
+      periodUnit: line.periodUnit,
+      durationValue: line.durationValue,
+      quantity: line.quantity,
+    });
+
+    if (!priced.ok) {
+      const issue = {
+        lineId: line.lineId,
+        productId: line.productId,
+        code: priced.error.code,
+        message: priced.error.message,
+      };
+      errors.push(issue);
+      lines.push({
+        lineId: line.lineId,
+        productId: line.productId,
+        title: product ? String(product.title || "") : "",
+        valid: false,
+        limits,
+        issue,
+      });
+      continue;
+    }
+
+    // The start date must respect this product's delivery lead time (same rule
+    // for standard and occasion products; the storefront uses the same helper).
+    const leadTimeMessage = line.startDate ? checkStartDate(product, line.startDate) : null;
+    if (leadTimeMessage) {
+      const issue = { lineId: line.lineId, productId: line.productId, code: "START_DATE_TOO_EARLY", message: leadTimeMessage };
+      errors.push(issue);
+      lines.push({ lineId: line.lineId, productId: line.productId, title: String(product.title || ""), valid: false, limits, issue });
+      continue;
+    }
+
+    const snapshot = buildProductSnapshot(product);
+    const pricedItem = { ...priced.item, ...snapshot, startDate: line.startDate };
+    pricedItems.push(pricedItem);
+
+    lines.push({
+      lineId: line.lineId,
+      ...snapshot,
+      valid: true,
+      limits,
+      quantity: pricedItem.quantity,
+      durationValue: pricedItem.durationValue,
+      durationUnit: pricedItem.durationUnit,
+      unitPrice: pricedItem.unitPrice,
+      baseUnitPrice: pricedItem.baseUnitPrice,
+      listUnitPrice: pricedItem.listUnitPrice,
+      depositEnabled: pricedItem.depositEnabled,
+      securityDeposit: pricedItem.securityDeposit,
+      deliveryFee: pricedItem.deliveryFee,
+      lineSubtotal: pricedItem.lineSubtotal,
+      lineDeposit: pricedItem.lineDeposit,
+      lineDelivery: pricedItem.lineDelivery,
+      lineTotal: pricedItem.lineTotal,
+      verificationRequired: pricedItem.verificationRequired,
+      billingType: pricedItem.billingType,
+      // What this line costs at checkout and per following period.
+      lineDueToday: roundMoney(pricedItem.dueTodayRental + pricedItem.lineDeposit + pricedItem.lineDelivery),
+      recurringPerPeriod: roundMoney(pricedItem.recurringPerUnit * pricedItem.quantity),
+      remainingPayments: pricedItem.billingType === "recurring" ? pricedItem.durationValue - 1 : 0,
+    });
+  }
+
+  return { lines, pricedItems, errors };
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+// The billing shape the storefront shows and the checkout creates. Derived only
+// from priced (server-side) items.
+function describeCartBilling(pricedItems, totals) {
+  const plan = planBilling(pricedItems);
+  if (!plan.ok) return { plan, billing: null };
+  return {
+    plan,
+    billing: {
+      mode: plan.mode,
+      interval: plan.interval,
+      billingCycles: plan.cycles,
+      dueToday: totals.dueToday,
+      totalRental: totals.subtotal,
+      oneTimeCharges: roundMoney(totals.depositTotal + totals.deliveryTotal),
+      recurringAmount: plan.recurringAmount,
+      // Payments after today, as runs of an equal amount.
+      upcoming: plan.schedule.length
+        ? [
+            ...(plan.schedule[0].payments > 1 ? [{ payments: plan.schedule[0].payments - 1, amount: plan.schedule[0].amount }] : []),
+            ...plan.schedule.slice(1),
+          ]
+        : [],
+    },
+  };
+}
+
+// Read-only pricing preview. The storefront calls this to show the same amounts
+// the server will charge, and to clamp quantities/durations to the limits the
+// server enforces. Public because it exposes nothing beyond catalogue data.
+app.post("/api/payments/checkout-quote", async (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+
+  if (items.length === 0) {
+    return res.json({
+      currency: WEBSITE_CURRENCY,
+      lines: [],
+      issues: [],
+      totals: { subtotal: 0, depositTotal: 0, deliveryTotal: 0, total: 0, dueToday: 0 },
+      billing: { mode: "one_time", interval: "", billingCycles: 1, dueToday: 0, totalRental: 0, oneTimeCharges: 0, recurringAmount: 0, upcoming: [] },
+      requiresIdentityVerification: false,
+      valid: true,
+    });
+  }
+
+  if (items.length > 50) {
+    return res.status(400).json({ message: "Too many cart items." });
+  }
+
+  const { requestedLines, errors: intentErrors } = parseCartIntent(items, { requireStartDate: false });
+  const productById = await loadCartProducts(requestedLines);
+  const { lines, pricedItems, errors } = priceCartLines(requestedLines, productById);
+  const issues = [...intentErrors, ...errors];
+  const totals = sumOrderTotals(pricedItems);
+  const { plan, billing } = describeCartBilling(pricedItems, totals);
+  if (!plan.ok) issues.push({ lineId: "", productId: "", code: plan.code, message: plan.message });
+
+  return res.json({
+    currency: WEBSITE_CURRENCY,
+    lines,
+    issues,
+    totals,
+    billing,
+    requiresIdentityVerification: pricedItems.some((item) => item.verificationRequired),
+    valid: issues.length === 0 && pricedItems.length === items.length,
+  });
+});
+
 app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => {
   if (!stripe) {
     return res.status(500).json({ message: "Stripe is not configured." });
@@ -4024,6 +4696,10 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
   const shippingAddressRaw = req.body?.shippingAddress || {};
   if (items.length === 0) {
     return res.status(400).json({ message: "Cart items are required." });
+  }
+
+  if (items.length > 50) {
+    return res.status(400).json({ message: "Too many cart items." });
   }
 
   const shippingAddress = {
@@ -4048,122 +4724,154 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
     return res.status(400).json({ message: "Shipping address is required." });
   }
 
-  const normalizedItems = items
-    .map((item) => {
-      const title = String(item?.title || "").trim();
-      const quantity = Math.max(1, Number(item?.quantity) || 1);
-      const amount = Number(item?.unitPrice) || 0;
-      const baseUnitPrice = Number(item?.baseUnitPrice) || amount;
-      const durationLabel = String(item?.durationLabel || "").trim();
-      const durationValue = Math.max(1, Number(item?.durationValue) || 1);
-      const durationUnit = ["day", "week", "month"].includes(String(item?.durationUnit))
-        ? String(item?.durationUnit)
-        : "week";
-      const startDate = String(item?.startDate || "").trim();
-      const depositEnabled = Boolean(item?.depositEnabled);
-      const securityDeposit = depositEnabled ? Number(item?.securityDeposit) || 0 : 0;
-      const deliveryFee = Math.max(0, Number(item?.deliveryFee) || 0);
-      const productId = String(item?.productId || "").trim();
-      const slug = String(item?.slug || "").trim();
-      const imageUrl = String(item?.imageUrl || "").trim();
-      const categoryName = String(item?.categoryName || "").trim();
-      const brandName = String(item?.brandName || "").trim();
+  // Only non-chargeable intent is read from the request. Every amount below is
+  // derived from the persisted product, so a tampered client payload cannot
+  // change what the customer is charged.
+  const { requestedLines, errors: intentErrors } = parseCartIntent(items, { requireStartDate: true });
+  const productById = await loadCartProducts(requestedLines);
+  const { lines, pricedItems, errors } = priceCartLines(requestedLines, productById);
+  const issues = [...intentErrors, ...errors];
 
-      if (!title || amount <= 0) return null;
+  if (issues.length > 0) {
+    // Same shape as the quote endpoint so the client can re-render the cart
+    // against authoritative limits instead of just showing a flat error.
+    return res.status(400).json({
+      message: issues[0].message,
+      issues,
+      lines,
+      currency: WEBSITE_CURRENCY,
+    });
+  }
 
-      const lineSubtotal = amount * quantity;
-      const lineDeposit = securityDeposit * quantity;
-      return {
-        productId,
-        title,
-        slug,
-        imageUrl,
-        categoryName,
-        brandName,
-        quantity,
-        unitPrice: amount,
-        baseUnitPrice,
-        durationValue,
-        durationUnit,
-        startDate,
-        depositEnabled,
-        securityDeposit,
-        deliveryFee,
-        lineSubtotal,
-        lineDeposit,
-        lineDelivery: 0,
-        lineTotal: lineSubtotal + lineDeposit,
-        currency: WEBSITE_CURRENCY,
-        durationLabel,
-      };
-    })
-    .filter(Boolean);
-
-  if (normalizedItems.length === 0) {
+  if (pricedItems.length === 0) {
     return res.status(400).json({ message: "No valid cart line items found." });
   }
 
-  const productIds = [
-    ...new Set(
-      normalizedItems
-        .map((item) => String(item.productId || "").trim())
-        .filter((id) => mongoose.Types.ObjectId.isValid(id))
-    ),
-  ];
-
-  const products = productIds.length
-    ? await Product.find({ _id: { $in: productIds } }).select("_id verificationRequired deliveryFee").lean()
-    : [];
-  const productById = new Map(products.map((product) => [String(product._id), product]));
-
-  const itemsWithDelivery = normalizedItems.map((item) => {
-    const productId = String(item.productId || "").trim();
-    const product = mongoose.Types.ObjectId.isValid(productId) ? productById.get(productId) : null;
-    const deliveryFeeFromProduct = product ? Math.max(0, Number(product.deliveryFee) || 0) : null;
-    const deliveryFee = deliveryFeeFromProduct ?? Math.max(0, Number(item.deliveryFee) || 0);
-    const lineDelivery = deliveryFee * item.quantity;
-    return {
-      ...item,
-      deliveryFee,
-      lineDelivery,
-      lineTotal: item.lineSubtotal + item.lineDeposit + lineDelivery,
-    };
-  });
-
-  const requiresIdentityVerification = itemsWithDelivery.some((item) => {
-    const productId = String(item.productId || "").trim();
-    if (!mongoose.Types.ObjectId.isValid(productId)) return true;
-    const product = productById.get(productId);
-    if (!product) return true;
-    return product.verificationRequired !== false;
-  });
-
+  const requiresIdentityVerification = pricedItems.some((item) => item.verificationRequired);
   if (requiresIdentityVerification && !user.identityVerified) {
     return res.status(403).json({
       message: "Identity verification is required for one or more selected products.",
     });
   }
 
-  const lineItems = itemsWithDelivery
-    .map((item) => {
-      const perUnitTotal = item.unitPrice + item.securityDeposit + item.deliveryFee;
-      return {
+  const totals = sumOrderTotals(pricedItems);
+  if (totals.total <= 0) {
+    return res.status(400).json({ message: "Order total must be greater than zero." });
+  }
+
+  // Standard rentals longer than one period are billed per period for a fixed
+  // term; everything else is a single payment. Decided here from priced items.
+  const { plan } = describeCartBilling(pricedItems, totals);
+  if (!plan.ok) {
+    return res.status(400).json({
+      message: plan.message,
+      issues: [{ lineId: "", productId: "", code: plan.code, message: plan.message }],
+      lines,
+      currency: WEBSITE_CURRENCY,
+    });
+  }
+  const isRecurring = plan.mode === "recurring";
+
+  // Precondition, not a price. `expectedTotal` is the figure the customer just
+  // approved; it is only ever compared against the server's own total and can
+  // never raise, lower or otherwise influence what is charged. A mismatch means
+  // the catalogue moved between the quote and this request, so the charge is
+  // refused and a refreshed quote is returned for the customer to re-confirm.
+  //
+  // TODO(2026-11-30): make `expectedTotal` mandatory and reject a request
+  // without it. See "Removing the expectedTotal compatibility path" in
+  // CLAUDE.md for the conditions that must hold first.
+  const expectedTotalRaw = req.body?.expectedTotal;
+  const hasExpectedTotal =
+    expectedTotalRaw !== undefined && expectedTotalRaw !== null && expectedTotalRaw !== "";
+
+  if (!hasExpectedTotal) {
+    // Surfaced so the removal decision below can be made on evidence: once this
+    // stops appearing, no client is relying on the compatibility path.
+    console.warn(
+      "checkout-session called without expectedTotal (legacy client). See TODO(2026-11-30)."
+    );
+  }
+
+  if (hasExpectedTotal) {
+    const expectedTotal = Number(expectedTotalRaw);
+    const expectedTotalIsUsable = Number.isFinite(expectedTotal) && expectedTotal >= 0;
+
+    // Compared in integer cents. Both sides are the currency's smallest unit,
+    // which is also what Stripe is charged, so a one-cent move is caught
+    // exactly and no float epsilon can mask or invent a difference.
+    const expectedCents = expectedTotalIsUsable ? Math.round(expectedTotal * 100) : null;
+    const authoritativeCents = Math.round(totals.total * 100);
+
+    // The amount due today must match too, when the client states it: it is the
+    // figure a recurring-rental customer actually pays at checkout.
+    const expectedDueRaw = req.body?.expectedDueToday;
+    const dueMismatch =
+      expectedDueRaw !== undefined &&
+      expectedDueRaw !== null &&
+      expectedDueRaw !== "" &&
+      Math.round(Number(expectedDueRaw) * 100) !== Math.round(totals.dueToday * 100);
+
+    if (expectedCents === null || expectedCents !== authoritativeCents || dueMismatch) {
+      return res.status(409).json({
+        code: "PRICE_CHANGED",
+        message:
+          "Pricing changed since you reviewed your cart. Please review the updated total and confirm again.",
+        currency: WEBSITE_CURRENCY,
+        lines,
+        issues: [],
+        totals,
+        billing: describeCartBilling(pricedItems, totals).billing,
+        requiresIdentityVerification: pricedItems.some((item) => item.verificationRequired),
+        valid: true,
+      });
+    }
+  }
+
+  const toCents = (amount) => Math.round(amount * 100);
+  const lineItems = [];
+  pricedItems.forEach((item, index) => {
+    const periodLabel = formatRentalPeriodLabel(item.durationValue, item.durationUnit);
+    if (item.billingType === "recurring") {
+      // The rental price recurs once per period for the fixed term...
+      lineItems.push({
         quantity: item.quantity,
         price_data: {
           currency: WEBSITE_CURRENCY,
-          unit_amount: Math.round(perUnitTotal * 100),
+          unit_amount: toCents(item.recurringPerUnit),
+          recurring: { interval: plan.interval, interval_count: 1 },
           product_data: {
             name: item.title,
-            description: item.durationLabel ? `Rental period: ${item.durationLabel}` : undefined,
+            description: `Rental period: ${periodLabel}, billed every ${item.durationUnit}`,
+            // Lets the webhook map the subscription item back to this order line.
+            metadata: { leihflussLine: String(index) },
           },
         },
-      };
+      });
+      // ...while delivery and deposit are charged once, with the first payment.
+      const oneTimePerUnit = roundMoney(item.securityDeposit + item.deliveryFee);
+      if (oneTimePerUnit > 0) {
+        lineItems.push({
+          quantity: item.quantity,
+          price_data: {
+            currency: WEBSITE_CURRENCY,
+            unit_amount: toCents(oneTimePerUnit),
+            product_data: { name: `${item.title}: delivery and deposit (one-time)` },
+          },
+        });
+      }
+      return;
+    }
+    lineItems.push({
+      quantity: item.quantity,
+      price_data: {
+        currency: WEBSITE_CURRENCY,
+        unit_amount: toCents(item.perUnitChargeable),
+        product_data: { name: item.title, description: `Rental period: ${periodLabel}` },
+      },
     });
+  });
 
-  const subtotal = itemsWithDelivery.reduce((sum, item) => sum + item.lineSubtotal, 0);
-  const depositTotal = itemsWithDelivery.reduce((sum, item) => sum + item.lineDeposit, 0);
-  const deliveryTotal = itemsWithDelivery.reduce((sum, item) => sum + item.lineDelivery, 0);
-  const total = subtotal + depositTotal + deliveryTotal;
   const orderNumber = buildOrderNumber();
   const order = await Order.create({
     orderNumber,
@@ -4174,8 +4882,8 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
       phone: user.phone || "",
     },
     shippingAddress,
-    items: itemsWithDelivery.map((item) => ({
-      productId: /^[a-f\d]{24}$/i.test(item.productId || "") ? item.productId : null,
+    items: pricedItems.map((item) => ({
+      productId: item.productId,
       title: item.title,
       slug: item.slug,
       imageUrl: item.imageUrl,
@@ -4194,15 +4902,28 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
       lineDeposit: item.lineDeposit,
       lineDelivery: item.lineDelivery,
       lineTotal: item.lineTotal,
+      billingType: item.billingType,
     })),
     currency: WEBSITE_CURRENCY,
-    subtotal,
-    depositTotal,
-    deliveryTotal,
-    total,
+    subtotal: totals.subtotal,
+    depositTotal: totals.depositTotal,
+    deliveryTotal: totals.deliveryTotal,
+    total: totals.total,
     status: "pending_payment",
     fulfillmentStatus: "pending",
     paymentStatus: "unpaid",
+    billingMode: isRecurring ? "recurring" : "one_time",
+    recurring: isRecurring
+      ? {
+          interval: plan.interval,
+          billingCycles: plan.cycles,
+          recurringAmount: plan.recurringAmount,
+          totalRentalCommitment: totals.subtotal,
+          oneTimeCharges: roundMoney(totals.depositTotal + totals.deliveryTotal),
+          dueToday: totals.dueToday,
+          status: "pending",
+        }
+      : undefined,
   });
 
   if (!user.stripeCustomerId) {
@@ -4219,15 +4940,18 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
   }
 
   const frontendBaseUrl = getFrontendBaseUrl();
+  const orderMetadata = {
+    orderId: String(order._id),
+    orderNumber: order.orderNumber,
+    userId: String(user._id),
+  };
   const checkoutSession = await stripe.checkout.sessions.create({
-    mode: "payment",
+    mode: isRecurring ? "subscription" : "payment",
     customer: user.stripeCustomerId,
     line_items: lineItems,
-    metadata: {
-      orderId: String(order._id),
-      orderNumber: order.orderNumber,
-      userId: String(user._id),
-    },
+    metadata: orderMetadata,
+    // Copied onto the subscription so recurring invoices can be matched to the order.
+    ...(isRecurring ? { subscription_data: { metadata: orderMetadata } } : {}),
     success_url: `${frontendBaseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${frontendBaseUrl}/checkout?canceled=1`,
   });
@@ -4240,9 +4964,458 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
     url: checkoutSession.url,
     orderId: String(order._id),
     orderNumber: order.orderNumber,
+    // Server-calculated amounts, so the client can reconcile what it displayed.
+    currency: WEBSITE_CURRENCY,
+    subtotal: totals.subtotal,
+    depositTotal: totals.depositTotal,
+    deliveryTotal: totals.deliveryTotal,
+    total: totals.total,
+    dueToday: totals.dueToday,
+    billingMode: isRecurring ? "recurring" : "one_time",
   });
 });
 
+// Single place where an order transitions to paid. Safe to call repeatedly:
+// the paymentStatus guard makes a redelivered webhook or a page refresh a no-op.
+async function applyPaidCheckoutSession(order, checkoutSession) {
+  // The first payment of a recurring rental is NOT the whole rental: the order
+  // becomes active and "partially_paid" until every booked period is paid.
+  if (order.billingMode === "recurring" && order.recurring) {
+    return applyPaidRecurringCheckout(order, checkoutSession);
+  }
+
+  if (order.paymentStatus === "paid") {
+    return { changed: false, order };
+  }
+
+  order.status = "paid";
+  order.fulfillmentStatus = order.fulfillmentStatus === "pending" ? "processing" : order.fulfillmentStatus;
+  order.paymentStatus = "paid";
+  order.stripePaymentIntentId = String(checkoutSession?.payment_intent || order.stripePaymentIntentId || "");
+  order.paymentConfirmedAt = new Date();
+  await order.save();
+
+  return { changed: true, order };
+}
+
+async function applyPaidRecurringCheckout(order, checkoutSession) {
+  let changed = false;
+  const subscriptionId = idOf(checkoutSession?.subscription);
+  if (subscriptionId && order.stripeSubscriptionId !== subscriptionId) {
+    order.stripeSubscriptionId = subscriptionId;
+    changed = true;
+  }
+  if (activateRecurringOrder(order)) changed = true;
+  // The checkout's own invoice is the first paid period. Counted by id, so the
+  // matching invoice.paid event later is a no-op.
+  if (recordPaidInvoice(order, idOf(checkoutSession?.invoice))) changed = true;
+
+  if (changed) await order.save();
+  return { changed, order };
+}
+
+async function markCheckoutSessionUnpaid(order) {
+  if (order.paymentStatus === "paid" || order.paymentStatus === "partially_paid") {
+    return { changed: false, order };
+  }
+  if (order.status === "pending_payment") {
+    return { changed: false, order };
+  }
+
+  order.status = "pending_payment";
+  order.fulfillmentStatus = "pending";
+  order.paymentStatus = "unpaid";
+  await order.save();
+  return { changed: true, order };
+}
+
+function extractCheckoutSessionId(stripeEvent) {
+  const object = stripeEvent?.data?.object || {};
+  return String(object.id || "").trim();
+}
+
+// An event whose order cannot be resolved within this window is assumed to be
+// racing order creation, and is left unclaimed so Stripe retries. Past it, the
+// session is treated as genuinely foreign and acknowledged so retries stop.
+const UNRESOLVED_EVENT_GRACE_MS = 15 * 60 * 1000;
+
+/**
+ * Locates the Order a Stripe event belongs to.
+ *
+ * Primary match is the stored checkout session id. That id is persisted just
+ * after the session is created, so a fast webhook can arrive before the write
+ * lands; `metadata.orderId` (set by us when creating the session) closes that
+ * window. Metadata is verified against the order before it is trusted to route
+ * a payment, and a contradiction is reported rather than guessed at.
+ */
+async function resolveOrderForStripeEvent(stripeEvent) {
+  const session = stripeEvent?.data?.object || {};
+  const sessionId = String(session.id || "").trim();
+  const metadata = session.metadata || {};
+  const metadataOrderId = String(metadata.orderId || "").trim();
+  const metadataOrderNumber = String(metadata.orderNumber || "").trim();
+  const metadataUserId = String(metadata.userId || "").trim();
+
+  if (sessionId) {
+    const bySession = await Order.findOne({ stripeCheckoutSessionId: sessionId });
+    if (bySession) return { order: bySession, matchedBy: "sessionId", mismatch: null };
+  }
+
+  if (!mongoose.Types.ObjectId.isValid(metadataOrderId)) {
+    return { order: null, matchedBy: null, mismatch: null };
+  }
+
+  const byMetadata = await Order.findById(metadataOrderId);
+  if (!byMetadata) return { order: null, matchedBy: null, mismatch: null };
+
+  if (metadataOrderNumber && byMetadata.orderNumber !== metadataOrderNumber) {
+    return { order: null, matchedBy: null, mismatch: "orderNumber" };
+  }
+
+  if (metadataUserId && String(byMetadata.userId) !== metadataUserId) {
+    return { order: null, matchedBy: null, mismatch: "userId" };
+  }
+
+  const storedSessionId = String(byMetadata.stripeCheckoutSessionId || "").trim();
+  if (storedSessionId && sessionId && storedSessionId !== sessionId) {
+    // The order already belongs to a different checkout session; never move it.
+    return { order: null, matchedBy: null, mismatch: "sessionId" };
+  }
+
+  if (!storedSessionId && sessionId) {
+    byMetadata.stripeCheckoutSessionId = sessionId;
+    await byMetadata.save();
+  }
+
+  return { order: byMetadata, matchedBy: "metadata", mismatch: null };
+}
+
+/**
+ * Locates the Order an invoice / subscription event belongs to.
+ *
+ * Primary match is the subscription id stored on the order. The first invoice
+ * can arrive before that id is stored, so the metadata copied onto the
+ * subscription (and, as a last resort, the subscription fetched from Stripe) is
+ * used, and verified against the order before it is trusted.
+ */
+async function resolveOrderForSubscriptionEvent(stripeEvent, stripeClient = stripe) {
+  const subscriptionId = subscriptionIdOfEvent(stripeEvent);
+  if (!subscriptionId) return { order: null, matchedBy: null, mismatch: null };
+
+  const bySubscription = await Order.findOne({ stripeSubscriptionId: subscriptionId });
+  if (bySubscription) return { order: bySubscription, matchedBy: "subscriptionId", mismatch: null };
+
+  let metadata = metadataOfEvent(stripeEvent);
+  if (!mongoose.Types.ObjectId.isValid(String(metadata.orderId || "")) && stripeClient) {
+    const subscription = await stripeClient.subscriptions.retrieve(subscriptionId);
+    metadata = subscription?.metadata || {};
+  }
+
+  const metadataOrderId = String(metadata.orderId || "").trim();
+  if (!mongoose.Types.ObjectId.isValid(metadataOrderId)) return { order: null, matchedBy: null, mismatch: null };
+
+  const byMetadata = await Order.findById(metadataOrderId);
+  if (!byMetadata) return { order: null, matchedBy: null, mismatch: null };
+
+  if (metadata.orderNumber && byMetadata.orderNumber !== String(metadata.orderNumber)) {
+    return { order: null, matchedBy: null, mismatch: "orderNumber" };
+  }
+  if (metadata.userId && String(byMetadata.userId) !== String(metadata.userId)) {
+    return { order: null, matchedBy: null, mismatch: "userId" };
+  }
+  if (byMetadata.billingMode !== "recurring" || !byMetadata.recurring) {
+    return { order: null, matchedBy: null, mismatch: "billingMode" };
+  }
+  const stored = String(byMetadata.stripeSubscriptionId || "").trim();
+  if (stored && stored !== subscriptionId) return { order: null, matchedBy: null, mismatch: "subscriptionId" };
+
+  if (!stored) {
+    byMetadata.stripeSubscriptionId = subscriptionId;
+    await byMetadata.save();
+  }
+  return { order: byMetadata, matchedBy: "metadata", mismatch: null };
+}
+
+/**
+ * Applies a recurring-billing event to its order. Idempotent: counting is keyed
+ * by invoice id and every transition is a guarded no-op when repeated.
+ */
+async function processRecurringEvent(stripeEvent, order, stripeClient = stripe) {
+  const object = stripeEvent.data.object || {};
+  const subscriptionId = subscriptionIdOfEvent(stripeEvent);
+  let changed = false;
+
+  if (stripeEvent.type === "invoice.paid") {
+    if (activateRecurringOrder(order)) changed = true;
+    if (subscriptionId && order.stripeSubscriptionId !== subscriptionId) {
+      order.stripeSubscriptionId = subscriptionId;
+      changed = true;
+    }
+    const paidAt = Number(object.status_transitions?.paid_at) > 0 ? new Date(object.status_transitions.paid_at * 1000) : new Date();
+    if (recordPaidInvoice(order, idOf(object), { paidAt, nextBillingDate: nextBillingDateOfInvoice(object) })) changed = true;
+    if (changed) await order.save();
+    // The subscription must end by itself after the booked term. Done here as
+    // well as on checkout completion so either event is enough.
+    if (stripeClient && subscriptionId) await ensureFixedTermSchedule({ stripe: stripeClient, order, subscriptionId });
+    return;
+  }
+
+  if (stripeEvent.type === "invoice.payment_failed") {
+    const failedAt = Number(stripeEvent.created) > 0 ? new Date(stripeEvent.created * 1000) : new Date();
+    if (recordFailedPayment(order, failedAt)) await order.save();
+    return;
+  }
+
+  if (stripeEvent.type === "customer.subscription.deleted") {
+    if (recordSubscriptionEnded(order)) await order.save();
+  }
+}
+
+// A handler cannot outlive the 60s function limit, so a claim older than this
+// belongs to a worker that died. Taking it over is safe because every state
+// change the handler performs is idempotent.
+const STRIPE_EVENT_LEASE_MS = 2 * 60 * 1000;
+
+/**
+ * Takes the processing lease for an event.
+ *
+ * Returns `claimed` when this worker should process it, `duplicate` when it has
+ * already completed, and `in_progress` when another worker holds a live lease
+ * (answered with a retry so the two never process concurrently).
+ *
+ * A claim left behind by a crashed worker is taken over once its lease expires,
+ * so an interrupted event is finished by a retry instead of being permanently
+ * skipped.
+ */
+async function claimStripeEvent(stripeEvent, orderId) {
+  try {
+    await StripeWebhookEvent.create({
+      eventId: stripeEvent.id,
+      type: stripeEvent.type,
+      orderId: orderId || null,
+      status: "processing",
+      claimedAt: new Date(),
+    });
+    return { outcome: "claimed" };
+  } catch (error) {
+    if (!error || error.code !== 11000) throw error;
+  }
+
+  const existing = await StripeWebhookEvent.findOne({ eventId: stripeEvent.id });
+  if (!existing) {
+    // Deleted between the failed insert and this read; let Stripe retry.
+    return { outcome: "in_progress" };
+  }
+
+  if (existing.status === "completed") {
+    return { outcome: "duplicate" };
+  }
+
+  const staleBefore = new Date(Date.now() - STRIPE_EVENT_LEASE_MS);
+  const takenOver = await StripeWebhookEvent.findOneAndUpdate(
+    {
+      eventId: stripeEvent.id,
+      status: "processing",
+      claimedAt: { $lte: staleBefore },
+    },
+    { $set: { claimedAt: new Date(), orderId: orderId || existing.orderId || null } },
+    { returnDocument: "after" }
+  );
+
+  if (takenOver) {
+    console.warn(
+      `Stripe webhook ${stripeEvent.id} had an abandoned claim; taking it over and reprocessing.`
+    );
+    return { outcome: "claimed", recovered: true };
+  }
+
+  return { outcome: "in_progress" };
+}
+
+async function completeStripeEvent(stripeEvent, orderId) {
+  await StripeWebhookEvent.updateOne(
+    { eventId: stripeEvent.id },
+    { $set: { status: "completed", processedAt: new Date(), orderId: orderId || null } }
+  );
+}
+
+function isStripeEventWithinGrace(stripeEvent) {
+  const createdSeconds = Number(stripeEvent?.created);
+  if (!Number.isFinite(createdSeconds) || createdSeconds <= 0) return true;
+  return Date.now() - createdSeconds * 1000 < UNRESOLVED_EVENT_GRACE_MS;
+}
+
+// Stripe needs the exact signed bytes. Express gives us a Buffer via
+// express.raw; some serverless runtimes parse the body first, so fall back to
+// whatever raw representation is available and fail closed if there is none.
+function getStripeRawBody(req) {
+  if (Buffer.isBuffer(req.body)) return req.body;
+  if (Buffer.isBuffer(req.rawBody)) return req.rawBody;
+  if (typeof req.rawBody === "string") return Buffer.from(req.rawBody, "utf8");
+  return null;
+}
+
+app.post(STRIPE_WEBHOOK_PATH, async (req, res) => {
+  if (!stripe) {
+    return res.status(500).json({ message: "Stripe is not configured." });
+  }
+
+  if (!stripeWebhookSecret) {
+    console.error("Stripe webhook received but STRIPE_WEBHOOK_SECRET is not configured.");
+    return res.status(500).json({ message: "Stripe webhook secret is not configured." });
+  }
+
+  const signature = req.headers["stripe-signature"];
+  const rawBody = getStripeRawBody(req);
+
+  if (!signature || !rawBody) {
+    console.error("Stripe webhook rejected: missing signature or raw request body.");
+    return res.status(400).json({ message: "Invalid Stripe webhook request." });
+  }
+
+  let stripeEvent;
+  try {
+    stripeEvent = stripe.webhooks.constructEvent(rawBody, signature, stripeWebhookSecret);
+  } catch (error) {
+    console.error("Stripe webhook signature verification failed:", error.message);
+    return res.status(400).json({ message: "Invalid Stripe webhook signature." });
+  }
+
+  const relevantTypes = [
+    "checkout.session.completed",
+    "checkout.session.async_payment_succeeded",
+    "checkout.session.async_payment_failed",
+    "checkout.session.expired",
+    ...RECURRING_EVENT_TYPES,
+  ];
+
+  if (!relevantTypes.includes(stripeEvent.type)) {
+    return res.json({ received: true, ignored: true });
+  }
+
+  const isRecurringEvent = RECURRING_EVENT_TYPES.includes(stripeEvent.type);
+  // An invoice that does not belong to a subscription (e.g. a manual one) is none of our business.
+  const sessionId = isRecurringEvent ? subscriptionIdOfEvent(stripeEvent) : extractCheckoutSessionId(stripeEvent);
+  if (!sessionId) {
+    return res.json({ received: true, ignored: true });
+  }
+
+  // Resolve the order BEFORE claiming the event. Claiming first would burn the
+  // idempotency key on a delivery that raced order creation, and the 200 would
+  // stop Stripe retrying a payment we never recorded.
+  let resolution;
+  try {
+    resolution = isRecurringEvent
+      ? await resolveOrderForSubscriptionEvent(stripeEvent)
+      : await resolveOrderForStripeEvent(stripeEvent);
+  } catch (error) {
+    console.error("Stripe webhook order lookup failed:", error.message);
+    return res.status(500).json({ message: "Could not resolve order for Stripe event." });
+  }
+
+  const { order, mismatch } = resolution;
+
+  if (!order) {
+    if (!mismatch && isStripeEventWithinGrace(stripeEvent)) {
+      // Leave the event unclaimed so Stripe retries once the order write lands.
+      console.warn(
+        `Stripe webhook ${stripeEvent.type} could not resolve an order for session ${sessionId} yet; asking Stripe to retry.`
+      );
+      return res.status(409).json({
+        received: false,
+        matched: false,
+        message: "Order is not resolvable yet. Please retry.",
+      });
+    }
+
+    if (mismatch) {
+      console.error(
+        `Stripe webhook ${stripeEvent.type} metadata contradicts the referenced order (${mismatch}) for session ${sessionId}.`
+      );
+    } else {
+      console.error(
+        `Stripe webhook ${stripeEvent.type} had no matching order for session ${sessionId} after the grace window.`
+      );
+    }
+
+    // Acknowledge so Stripe stops retrying an event we can never match. Record
+    // it as completed: there is no work left to recover.
+    await StripeWebhookEvent.create({
+      eventId: stripeEvent.id,
+      type: stripeEvent.type,
+      status: "completed",
+      processedAt: new Date(),
+    }).catch((error) => {
+      if (!error || error.code !== 11000) throw error;
+    });
+
+    return res.json({ received: true, matched: false });
+  }
+
+  // Claim the processing lease now that the order is known. A completed claim
+  // is a true duplicate; a live one belongs to another worker; a stale one was
+  // abandoned by a crashed worker and is taken over.
+  let claim;
+  try {
+    claim = await claimStripeEvent(stripeEvent, order._id);
+  } catch (error) {
+    console.error("Stripe webhook bookkeeping failed:", error.message);
+    return res.status(500).json({ message: "Could not record Stripe webhook event." });
+  }
+
+  if (claim.outcome === "duplicate") {
+    return res.json({ received: true, duplicate: true });
+  }
+
+  if (claim.outcome === "in_progress") {
+    // Another worker holds a live lease. Ask Stripe to retry rather than
+    // processing the same event twice in parallel.
+    return res.status(409).json({
+      received: false,
+      message: "Event is already being processed. Please retry.",
+    });
+  }
+
+  try {
+    const sessionObject = stripeEvent.data.object || {};
+
+    if (isRecurringEvent) {
+      await processRecurringEvent(stripeEvent, order);
+    } else if (
+      stripeEvent.type === "checkout.session.completed" ||
+      stripeEvent.type === "checkout.session.async_payment_succeeded"
+    ) {
+      if (sessionObject.payment_status === "paid") {
+        await applyPaidCheckoutSession(order, sessionObject);
+        if (order.billingMode === "recurring" && order.recurring && idOf(sessionObject.subscription)) {
+          await ensureFixedTermSchedule({ stripe, order, subscriptionId: idOf(sessionObject.subscription) });
+        }
+      }
+    } else if (stripeEvent.type === "checkout.session.async_payment_failed") {
+      await markCheckoutSessionUnpaid(order);
+    } else if (stripeEvent.type === "checkout.session.expired" && !["paid", "partially_paid"].includes(order.paymentStatus)) {
+      order.status = "cancelled";
+      order.fulfillmentStatus = "cancelled";
+      await order.save();
+    }
+
+    // Only now is the claim terminal. A crash before this point leaves the
+    // lease to expire so a retry can finish the work.
+    await completeStripeEvent(stripeEvent, order._id);
+
+    return res.json({ received: true, recovered: Boolean(claim.recovered) });
+  } catch (error) {
+    // Release the claim so Stripe's retry can reprocess immediately rather than
+    // waiting out the lease.
+    await StripeWebhookEvent.deleteOne({ eventId: stripeEvent.id, status: "processing" }).catch(() => {});
+    console.error("Stripe webhook processing failed:", error.message);
+    return res.status(500).json({ message: "Stripe webhook processing failed." });
+  }
+});
+
+// Advisory only. The webhook is the source of truth for payment state; this
+// endpoint lets the success page reflect status promptly (and covers the window
+// before a webhook lands) without being the only path that can mark an order paid.
 app.post("/api/payments/checkout-confirm", requireUserAuth, async (req, res) => {
   if (!stripe) {
     return res.status(500).json({ message: "Stripe is not configured." });
@@ -4258,7 +5431,6 @@ app.post("/api/payments/checkout-confirm", requireUserAuth, async (req, res) => 
     return res.status(404).json({ message: "User not found." });
   }
 
-  const checkoutSession = await stripe.checkout.sessions.retrieve(sessionId);
   const order = await Order.findOne({
     stripeCheckoutSessionId: sessionId,
     userId: user._id,
@@ -4268,21 +5440,33 @@ app.post("/api/payments/checkout-confirm", requireUserAuth, async (req, res) => 
     return res.status(404).json({ message: "Order not found for this checkout session." });
   }
 
-  if (checkoutSession.payment_status !== "paid") {
-    if (order.status !== "pending_payment") {
-      order.status = "pending_payment";
-      order.fulfillmentStatus = "pending";
-      order.paymentStatus = "unpaid";
-      await order.save();
+  if (order.paymentStatus === "paid" || order.paymentStatus === "partially_paid") {
+    // Already applied (by the webhook or an earlier confirm). A recurring order
+    // must still end up with its fixed-term schedule; this is a no-op once attached.
+    if (order.billingMode === "recurring" && order.recurring && order.stripeSubscriptionId) {
+      await ensureFixedTermSchedule({ stripe, order, subscriptionId: order.stripeSubscriptionId });
     }
+    return res.json({
+      message: "Order payment confirmed.",
+      order: mapOrder(order),
+    });
+  }
+
+  const checkoutSession = await stripe.checkout.sessions.retrieve(sessionId);
+
+  if (checkoutSession.payment_status !== "paid") {
+    await markCheckoutSessionUnpaid(order);
     return res.status(409).json({ message: "Payment is not completed yet." });
   }
 
-  order.status = "paid";
-  order.fulfillmentStatus = order.fulfillmentStatus === "pending" ? "processing" : order.fulfillmentStatus;
-  order.paymentStatus = "paid";
-  order.stripePaymentIntentId = String(checkoutSession.payment_intent || "");
-  await order.save();
+  await applyPaidCheckoutSession(order, checkoutSession);
+
+  // Same guarantee as the webhook: a recurring rental never runs without the
+  // schedule that cancels it after the booked term. One-time orders skip this.
+  if (order.billingMode === "recurring" && order.recurring) {
+    const subscriptionId = idOf(checkoutSession.subscription) || order.stripeSubscriptionId;
+    if (subscriptionId) await ensureFixedTermSchedule({ stripe, order, subscriptionId });
+  }
 
   return res.json({
     message: "Order payment confirmed.",
@@ -4385,6 +5569,16 @@ async function startServer() {
       console.warn("SMTP is not fully configured. Email notifications are disabled.");
     }
 
+    if (!isJwtSecretConfigured()) {
+      console.error("JWT_SECRET is not configured. Signin, signup and all admin routes will return 500.");
+    }
+
+    if (stripe && !stripeWebhookSecret) {
+      console.warn(
+        "STRIPE_WEBHOOK_SECRET is not configured. Stripe webhooks will be rejected and orders will only be confirmed by the success page."
+      );
+    }
+
     const reminderIntervalMs = Math.max(10, Number(process.env.RENTAL_REMINDER_INTERVAL_MINUTES || 60)) * 60 * 1000;
     const runSweep = async () => {
       try {
@@ -4411,3 +5605,12 @@ module.exports.default = app;
 module.exports.app = app;
 module.exports.initializeApp = initializeApp;
 module.exports.runRentalEndingReminderSweep = runRentalEndingReminderSweep;
+module.exports.applyPaidCheckoutSession = applyPaidCheckoutSession;
+module.exports.markCheckoutSessionUnpaid = markCheckoutSessionUnpaid;
+module.exports.resolveOrderForStripeEvent = resolveOrderForStripeEvent;
+module.exports.stripe = stripe;
+module.exports.claimStripeEvent = claimStripeEvent;
+module.exports.processRecurringEvent = processRecurringEvent;
+module.exports.resolveOrderForSubscriptionEvent = resolveOrderForSubscriptionEvent;
+module.exports.completeStripeEvent = completeStripeEvent;
+module.exports.STRIPE_EVENT_LEASE_MS = STRIPE_EVENT_LEASE_MS;

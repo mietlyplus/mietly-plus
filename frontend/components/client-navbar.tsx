@@ -17,6 +17,10 @@ const copy = {
     promo: "LIMITED-TIME MEGA DEAL: Up to 40% OFF Premium Tech Rentals",
     search: "Search for products...",
     allCategories: "All categories",
+    occasions: "Occasions",
+    home: "Home", shop: "Shop", cart: "Cart", wishlist: "WishList", account: "Account",
+    close: "Close", searchLabel: "Search", openSidebar: "Open category sidebar",
+    wishlistLabel: "Wishlist", cartLabel: "Cart",
     welcome: "Welcome",
     signUp: "Sign up",
     logIn: "Log in",
@@ -30,6 +34,10 @@ const copy = {
     promo: "MEGA-ANGEBOT NUR KURZ: Bis zu 40% Rabatt auf Premium-Tech-Mieten",
     search: "Suche nach Produkten...",
     allCategories: "Alle Kategorien",
+    occasions: "Anlässe",
+    home: "Start", shop: "Shop", cart: "Warenkorb", wishlist: "Wunschliste", account: "Konto",
+    close: "Schließen", searchLabel: "Suchen", openSidebar: "Kategorien öffnen",
+    wishlistLabel: "Wunschliste", cartLabel: "Warenkorb",
     welcome: "Willkommen",
     signUp: "Registrieren",
     logIn: "Einloggen",
@@ -112,6 +120,16 @@ function HomeIcon() {
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M3 10.5 12 3l9 7.5" />
       <path d="M5 10v10h14V10" />
+    </svg>
+  );
+}
+
+function OccasionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="3" y="9" width="18" height="11" rx="1" />
+      <path d="M12 9v11M3 13h18" />
+      <path d="M12 9c-2.5 0-4-1-4-2.5S9.5 4 12 9zM12 9c2.5 0 4-1 4-2.5S14.5 4 12 9z" />
     </svg>
   );
 }
@@ -339,7 +357,7 @@ export function ClientNavbar() {
           onSubmit={handleSearch} 
           className="relative hidden flex-1 items-center rounded-full border border-[rgba(73,153,173,0.35)] bg-white px-4 py-3 text-[rgb(73,153,173)] md:flex"
         >
-          <button type="submit" aria-label="Search" className="flex items-center justify-center outline-none">
+          <button type="submit" aria-label={copy[locale].searchLabel} className="flex items-center justify-center outline-none">
             <SearchIcon />
           </button>
           <input
@@ -487,7 +505,7 @@ export function ClientNavbar() {
 
           <Link
             href="/wishlist"
-            aria-label="wishlist"
+            aria-label={copy[locale].wishlistLabel}
             className="relative hidden text-[rgb(73,153,173)] transition hover:text-[rgb(60,138,158)] lg:inline-flex"
           >
             <HeartIcon />
@@ -499,7 +517,7 @@ export function ClientNavbar() {
           </Link>
           <Link
             href="/cart"
-            aria-label="cart"
+            aria-label={copy[locale].cartLabel}
             className="relative hidden text-[rgb(73,153,173)] transition hover:text-[rgb(60,138,158)] lg:inline-flex"
           >
             <CartIcon />
@@ -511,7 +529,7 @@ export function ClientNavbar() {
           </Link>
           <button
             type="button"
-            aria-label="Open category sidebar"
+            aria-label={copy[locale].openSidebar}
             onClick={() => setSidebarOpen(true)}
             className="inline-flex lg:hidden"
           >
@@ -524,6 +542,9 @@ export function ClientNavbar() {
         <div className="mx-auto flex w-full max-w-[1280px] items-center gap-5 px-4 py-3 text-sm font-medium text-white lg:text-base">
           <Link href="/shop" className="whitespace-nowrap rounded-md px-2 py-1.5 transition hover:bg-white/15 hover:text-white">
             {copy[locale].allCategories}
+          </Link>
+          <Link href="/occasions" className="whitespace-nowrap rounded-md px-2 py-1.5 font-bold transition hover:bg-white/15 hover:text-white">
+            {copy[locale].occasions}
           </Link>
           {topCategories.map((category) => (
             <NavCategoryItem key={category.id} category={category} locale={locale} />
@@ -544,7 +565,7 @@ export function ClientNavbar() {
                 onClick={() => setSidebarOpen(false)}
                 className="rounded-md border border-[rgba(73,153,173,0.35)] px-2 py-1 text-xs text-[rgb(73,153,173)]"
               >
-                Close
+                {copy[locale].close}
               </button>
             </div>
             <div className="space-y-0.5">
@@ -562,7 +583,7 @@ export function ClientNavbar() {
       ) : null}
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[rgba(73,153,173,0.22)] bg-white/95 backdrop-blur lg:hidden">
-        <div className="grid grid-cols-5 px-1 py-1">
+        <div className="grid grid-cols-6 px-1 py-1">
           <Link
             href="/"
             className={`flex flex-col items-center gap-1 rounded-md px-2 py-1 text-[11px] ${
@@ -570,7 +591,7 @@ export function ClientNavbar() {
             }`}
           >
             <HomeIcon />
-            <span>Home</span>
+            <span>{copy[locale].home}</span>
           </Link>
           <Link
             href="/shop"
@@ -579,7 +600,16 @@ export function ClientNavbar() {
             }`}
           >
             <ShopIcon />
-            <span>Shop</span>
+            <span>{copy[locale].shop}</span>
+          </Link>
+          <Link
+            href="/occasions"
+            className={`flex flex-col items-center gap-1 rounded-md px-2 py-1 text-[11px] ${
+              pathname.startsWith("/occasions") ? "text-[rgb(73,153,173)]" : "text-zinc-600"
+            }`}
+          >
+            <OccasionIcon />
+            <span>{copy[locale].occasions}</span>
           </Link>
           <Link
             href="/cart"
@@ -593,7 +623,7 @@ export function ClientNavbar() {
                 {cartCount}
               </span>
             ) : null}
-            <span>Cart</span>
+            <span>{copy[locale].cart}</span>
           </Link>
           <Link
             href="/wishlist"
@@ -607,7 +637,7 @@ export function ClientNavbar() {
                 {wishlistIds.length}
               </span>
             ) : null}
-            <span>WishList</span>
+            <span>{copy[locale].wishlist}</span>
           </Link>
           <Link
             href={currentUser ? "/profile" : "/signin"}
@@ -618,7 +648,7 @@ export function ClientNavbar() {
             }`}
           >
             <ProfileIcon />
-            <span>Account</span>
+            <span>{copy[locale].account}</span>
           </Link>
         </div>
       </nav>
