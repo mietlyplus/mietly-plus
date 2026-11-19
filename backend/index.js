@@ -5441,6 +5441,11 @@ app.post("/api/payments/checkout-confirm", requireUserAuth, async (req, res) => 
   }
 
   if (order.paymentStatus === "paid" || order.paymentStatus === "partially_paid") {
+    // Already applied (by the webhook or an earlier confirm). A recurring order
+    // must still end up with its fixed-term schedule; this is a no-op once attached.
+    if (order.billingMode === "recurring" && order.recurring && order.stripeSubscriptionId) {
+      await ensureFixedTermSchedule({ stripe, order, subscriptionId: order.stripeSubscriptionId });
+    }
     return res.json({
       message: "Order payment confirmed.",
       order: mapOrder(order),
@@ -5455,6 +5460,13 @@ app.post("/api/payments/checkout-confirm", requireUserAuth, async (req, res) => 
   }
 
   await applyPaidCheckoutSession(order, checkoutSession);
+
+  // Same guarantee as the webhook: a recurring rental never runs without the
+  // schedule that cancels it after the booked term. One-time orders skip this.
+  if (order.billingMode === "recurring" && order.recurring) {
+    const subscriptionId = idOf(checkoutSession.subscription) || order.stripeSubscriptionId;
+    if (subscriptionId) await ensureFixedTermSchedule({ stripe, order, subscriptionId });
+  }
 
   return res.json({
     message: "Order payment confirmed.",

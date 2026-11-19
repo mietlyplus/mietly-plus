@@ -331,3 +331,55 @@ test("webhook route: an event that belongs to no recurring order is acknowledged
   assert.equal(result.status, 200);
   assert.equal(result.body.matched, false);
 });
+
+// --- /checkout-confirm fallback ---------------------------------------------------
+
+test("checkout-confirm attaches the fixed-term schedule for a recurring order, once, and skips one-time orders", async () => {
+  const jwt = require("jsonwebtoken");
+  const User = require("./models/User");
+  User.findById = () => ({ select: () => ({ lean: async () => ({ _id: USER_ID }) }) });
+  const fake = fakeStripe();
+  Object.assign(stripe, {
+    subscriptions: fake.subscriptions,
+    subscriptionSchedules: fake.subscriptionSchedules,
+    checkout: { sessions: { retrieve: async () => ({ payment_status: "paid", subscription: "sub_1", invoice: "in_1" }) } },
+  });
+
+  const confirm = async (order) => {
+    Order.findOne = async () => order;
+    const server = http.createServer(app);
+    await new Promise((resolve) => server.listen(0, resolve));
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.address().port}/api/payments/checkout-confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt.sign({ sub: USER_ID, role: "user" }, process.env.JWT_SECRET)}` },
+        body: JSON.stringify({ sessionId: "cs_1" }),
+      });
+      return response.status;
+    } finally {
+      server.close();
+    }
+  };
+
+  const order = recurringOrder();
+  assert.equal(await confirm(order), 200);
+  assert.equal(order.paymentStatus, "partially_paid");
+  assert.equal(fake.calls.update.length, 1);
+  assert.equal(fake.calls.update[0].params.end_behavior, "cancel");
+  assert.equal(order.stripeSubscriptionScheduleId, "sub_sched_1");
+
+  // Confirming again (or the webhook arriving later) does not create a second schedule.
+  assert.equal(await confirm(order), 200);
+  assert.equal(fake.calls.update.length, 1);
+
+  // A paid order whose schedule step failed earlier is repaired on the next confirm.
+  const unscheduled = recurringOrder({ stripeSubscriptionId: "sub_1", paymentStatus: "partially_paid" });
+  assert.equal(await confirm(unscheduled), 200);
+  assert.equal(fake.calls.update.length, 2);
+
+  // One-time orders never touch the schedule API.
+  const oneTime = { ...recurringOrder(), billingMode: "one_time", recurring: undefined, paymentStatus: "unpaid", status: "pending_payment" };
+  assert.equal(await confirm(oneTime), 200);
+  assert.equal(fake.calls.update.length, 2);
+  assert.equal(oneTime.paymentStatus, "paid");
+});
