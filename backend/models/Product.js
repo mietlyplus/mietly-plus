@@ -243,8 +243,11 @@ const productSchema = new mongoose.Schema(
       ogImageUrl: { type: String, default: "", trim: true },
     },
     // "standard" products rent by week/month. "occasion" products rent by the day
-    // (1-7 days) from explicit prices in occasionPricing; nothing is multiplied.
+    // (1-7 days) at occasionDailyRate: price = daily rate x days, charged once.
     rentalMode: { type: String, enum: ["standard", "occasion"], default: "standard" },
+    occasionDailyRate: { type: Number, min: 0, default: 0 },
+    // Legacy: explicit per-length prices from drafts made before the daily rate.
+    // Read only as a fallback to derive a daily rate; never written any more.
     occasionPricing: {
       type: [{ _id: false, days: { type: Number, min: 1, max: 7 }, price: { type: Number, min: 0 } }],
       default: [],

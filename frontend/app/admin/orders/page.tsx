@@ -206,6 +206,20 @@ export default function AdminOrdersPage() {
               </span>
               <span className="text-lg font-bold text-zinc-900">{formatAmount(selectedOrder.total)}</span>
             </div>
+            {selectedOrder.billingMode === "recurring" && selectedOrder.recurring ? (
+              <div className="mt-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-700">
+                <p className="font-semibold text-zinc-800">
+                  Recurring rental ({selectedOrder.recurring.interval}ly): {selectedOrder.recurring.successfulCycles} of {selectedOrder.recurring.billingCycles} payments made, status {selectedOrder.recurring.status}
+                </p>
+                <p className="mt-1">
+                  {formatAmount(selectedOrder.recurring.recurringAmount)} per {selectedOrder.recurring.interval}; delivery and deposit {formatAmount(selectedOrder.recurring.oneTimeCharges)} were charged once. Total rental {formatAmount(selectedOrder.recurring.totalRentalCommitment)}.
+                </p>
+                {selectedOrder.recurring.nextBillingDate ? (
+                  <p className="mt-1">Next payment: {new Date(selectedOrder.recurring.nextBillingDate).toLocaleDateString("de-DE")}</p>
+                ) : null}
+                {selectedOrder.stripeSubscriptionId ? <p className="mt-1 text-xs text-zinc-500">Stripe subscription: {selectedOrder.stripeSubscriptionId}</p> : null}
+              </div>
+            ) : null}
 
             <div className="mt-3 rounded-lg border border-zinc-200 p-3">
               <p className="text-sm font-semibold text-zinc-800">Fulfillment Status</p>

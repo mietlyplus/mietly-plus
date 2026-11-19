@@ -17,7 +17,7 @@
 //   delivery        { leadDays }                      optional, 0-30 (default 2)
 //   tags            [string]
 //   pricing         { weekly, monthly }               standard only
-//                   { occasion: [{ days, price }] }   occasion only (days 1-7, explicit prices)
+//                   { daily }                          occasion only (daily rate, 1-7 days; legacy { occasion:[{days,price}] } is converted)
 //   seo             { metaTitle, metaDescription, keywords[], canonicalUrl, ogTitle, ogDescription }
 //   images          [{ url | file, origin, role, altDe, altEn, license?, note?, primary? }]
 //   sources         [{ type, url?, label?, note? }]   provenance
@@ -25,7 +25,7 @@
 //
 // Nothing here publishes anything. Import always creates an inactive product.
 
-const { normalizeOccasionOptions, MAX_OCCASION_DAYS } = require("./occasion-pricing");
+const { normalizeDailyRate, dailyRateFromLegacyOptions, MAX_OCCASION_DAYS } = require("./occasion-pricing");
 const { slugify, buildSlug, toMoney } = require("./product-payload");
 
 const SCHEMA_ID = "leihfluss.product-package/1";
@@ -129,12 +129,15 @@ function validateProductPackage(input) {
   // --- pricing ---
   let weekly = 0;
   let monthly = 0;
-  let occasionOptions = [];
+  let dailyRate = 0;
   if (rentalMode === "occasion") {
-    const result = normalizeOccasionOptions(pricing.occasion);
+    const result =
+      pricing.daily === undefined && Array.isArray(pricing.occasion)
+        ? dailyRateFromLegacyOptions(pricing.occasion)
+        : { ...normalizeDailyRate(pricing.daily), warnings: [] };
     result.errors.forEach((message) => errors.push(message));
     result.warnings.forEach((message) => warnings.push(message));
-    occasionOptions = result.options;
+    dailyRate = result.rate;
     if (pricing.weekly || pricing.monthly) warnings.push("Weekly/monthly prices are ignored for an occasion product.");
   } else if (rentalMode === "standard") {
     weekly = toMoney(pricing.weekly);
@@ -144,7 +147,7 @@ function validateProductPackage(input) {
     if (weekly > 0 && monthly > 0 && monthly > weekly * 5) {
       warnings.push("The monthly price is much higher than four weekly prices. Check both prices.");
     }
-    if (pricing.occasion) warnings.push("Occasion prices are ignored for a standard product.");
+    if (pricing.daily !== undefined || pricing.occasion) warnings.push("The daily price is ignored for a standard product.");
   }
 
   // --- images ---
@@ -221,7 +224,7 @@ function validateProductPackage(input) {
     specifications,
     tags: list(input.tags).map((tag) => text(tag, 60)).filter(Boolean).slice(0, 30),
     delivery: { leadDays },
-    pricing: rentalMode === "occasion" ? { occasion: occasionOptions } : { weekly, monthly },
+    pricing: rentalMode === "occasion" ? { daily: dailyRate } : { weekly, monthly },
     seo: {
       metaTitle: text(seoIn.metaTitle, 120),
       metaDescription: text(seoIn.metaDescription, 320),
@@ -285,7 +288,8 @@ function buildPackageProductPayload(pkg, { categoryId, brandId, brandName, image
       ogImageUrl: primary,
     },
     rentalMode: pkg.rentalMode,
-    occasionPricing: occasion ? pkg.pricing.occasion : [],
+    occasionDailyRate: occasion ? pkg.pricing.daily : 0,
+    occasionPricing: [],
     // Standard pricing keeps its existing meaning: weekly -> buyerPrice, monthly -> monthly fields.
     buyerPrice: occasion ? 0 : pkg.pricing.weekly,
     offerPrice: 0,

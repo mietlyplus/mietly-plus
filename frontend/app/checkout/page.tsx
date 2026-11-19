@@ -2,6 +2,8 @@
 
 import { durationLabel, localizeIssue } from "@/lib/rental-copy";
 import { useSiteLocale } from "@/lib/use-site-locale";
+import { PaymentBreakdown } from "@/components/payment-breakdown";
+import { euro, lineSummary, paymentCopy } from "@/lib/payment-copy";
 import Image from "next/image";
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
@@ -279,6 +281,11 @@ function CheckoutPageContent() {
   const depositTotal = quote?.totals.depositTotal ?? 0;
   const deliveryTotal = quote?.totals.deliveryTotal ?? 0;
   const grandTotal = quote?.totals.total ?? 0;
+  // What is charged now. For a recurring rental this is the first period plus
+  // one-time delivery and deposit, not the whole term.
+  const dueToday = quote?.totals.dueToday ?? 0;
+  const payCopy = paymentCopy(locale);
+  const summaryTotals = { subtotal, depositTotal, deliveryTotal, total: grandTotal, dueToday };
 
   const priceChanged = Boolean(quote) && Math.abs(grandTotal - cachedTotal) >= 0.01;
   const quoteIssues = quote?.issues ?? [];
@@ -417,6 +424,7 @@ function CheckoutPageContent() {
         // Precondition only. The server recalculates from the database and
         // refuses with 409 if this no longer matches; it never sets the price.
         expectedTotal: grandTotal,
+        expectedDueToday: dueToday,
         // Intent only. Prices, deposits and delivery fees are resolved server-side
         // from the product record, so sending them here would be meaningless.
         items: items.map((item) => ({
@@ -685,7 +693,7 @@ function CheckoutPageContent() {
                   <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900">
                     <p className="font-semibold">{repriceNotice}</p>
                     <p className="mt-1">
-                      {t.updatedTotal} <span className="font-bold">EUR {formatAmount(grandTotal)}</span>
+                      {t.updatedTotal} <span className="font-bold">{euro(dueToday, locale)}</span> ({payCopy.dueToday})
                     </p>
                     <button
                       type="button"
@@ -711,6 +719,12 @@ function CheckoutPageContent() {
                   </div>
                 ) : null}
 
+                {quote ? (
+                  <div className="mt-4 rounded-xl border border-zinc-200 p-4">
+                    <PaymentBreakdown billing={quote.billing} totals={summaryTotals} locale={locale} emphasis />
+                  </div>
+                ) : null}
+
                 <button
                   type="button"
                   onClick={onPayNow}
@@ -728,7 +742,7 @@ function CheckoutPageContent() {
                     ? t.redirectingStripe
                     : quoteLoading
                       ? t.confirmingPrices
-                      : t.pay(formatAmount(grandTotal))}
+                      : t.pay(formatAmount(dueToday))}
                 </button>
               </article>
             ) : null}
@@ -769,8 +783,15 @@ function CheckoutPageContent() {
                         <p className="mt-1 text-xs text-zinc-600">
                           {durationLabel(item.durationValue, item.durationUnit, locale)} | {t.qty} {item.quantity}
                         </p>
-                        <p className="mt-1 text-xs text-zinc-600">Start: {item.startDate}</p>
-                        <p className="mt-2 text-sm font-bold text-zinc-900">EUR {formatAmount(lineSubtotal)}</p>
+                        <p className="mt-1 text-xs text-zinc-600">{t.start} {item.startDate}</p>
+                        {lineSummary(quoteLine, locale).map((text) => (
+                          <p key={text} className="mt-1 text-xs font-medium text-zinc-800">{text}</p>
+                        ))}
+                        <p className="mt-2 text-sm font-bold text-zinc-900">
+                          {quoteLine?.billingType === "recurring"
+                            ? `${payCopy.dueToday}: ${euro(quoteLine.lineDueToday ?? 0, locale)}`
+                            : `EUR ${formatAmount(lineSubtotal)}`}
+                        </p>
                         <p className="mt-1 text-xs text-zinc-600">{t.delivery} EUR {formatAmount(lineDelivery)}</p>
                         {quoteLine?.valid === false ? (
                           <p className="mt-2 text-xs font-semibold text-rose-600">{quoteLine.issue ? localizeIssue(quoteLine.issue, item.title, locale) : ""}</p>
@@ -780,23 +801,8 @@ function CheckoutPageContent() {
                   })}
                 </div>
 
-                <div className="mt-4 border-t border-zinc-200 pt-4 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-zinc-600">{t.subtotal}</span>
-                    <span className="font-semibold text-zinc-900">EUR {formatAmount(subtotal)}</span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between">
-                    <span className="text-zinc-600">{t.deposit}</span>
-                    <span className="font-semibold text-zinc-900">EUR {formatAmount(depositTotal)}</span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between">
-                    <span className="text-zinc-600">{t.delivery}</span>
-                    <span className="font-semibold text-zinc-900">EUR {formatAmount(deliveryTotal)}</span>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between border-t border-zinc-200 pt-3">
-                    <span className="font-semibold text-zinc-800">{t.total}</span>
-                    <span className="text-2xl font-extrabold text-[rgb(47,118,135)]">EUR {formatAmount(grandTotal)}</span>
-                  </div>
+                <div className="mt-4 border-t border-zinc-200 pt-4">
+                  <PaymentBreakdown billing={quote?.billing} totals={summaryTotals} locale={locale} />
                 </div>
               </>
             )}

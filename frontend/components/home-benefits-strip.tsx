@@ -3,8 +3,8 @@
 import { useSiteLocale } from "@/lib/use-site-locale";
 
 const benefitLabels = {
-  en: ["500,000+ happy customers", "Low monthly costs", "Rent from 1 to 24+ months", "Leihfluss Care available"],
-  de: ["500.000+ zufriedene Kunden", "Niedrige Monatskosten", "Mieten von 1 bis 24+ Monaten", "Leihfluss Care verfügbar"],
+  en: ["1,000+ happy customers", "Low monthly costs", "Rent from 1 to 24+ months", "Leihfluss Care — coming soon"],
+  de: ["1.000+ zufriedene Kunden", "Niedrige Monatskosten", "Mieten von 1 bis 24+ Monaten", "Leihfluss Care — bald verfügbar"],
 };
 
 export function HomeBenefitsStrip() {

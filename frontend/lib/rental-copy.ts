@@ -27,6 +27,7 @@ const issueCopy = {
     START_DATE_TOO_EARLY: (t: string, d: string) => `${t || "This item"} cannot start that early.${d ? ` Earliest start date: ${d}.` : ""}`,
     INVALID_PRODUCT_REFERENCE: () => "A cart item is not valid any more. Please remove it.",
     INVALID_START_DATE: () => "Please choose a valid start date for this item.",
+    MIXED_BILLING_INTERVALS: () => "Weekly and monthly rentals have to be ordered separately. Please check out one billing period at a time.",
   },
   de: {
     PRODUCT_NOT_FOUND: (t: string) => `${t || "Dieser Artikel"} ist nicht mehr verfügbar.`,
@@ -39,6 +40,7 @@ const issueCopy = {
     START_DATE_TOO_EARLY: (t: string, d: string) => `${t || "Dieser Artikel"} kann nicht so früh starten.${d ? ` Frühester Starttermin: ${d}.` : ""}`,
     INVALID_PRODUCT_REFERENCE: () => "Ein Artikel im Warenkorb ist nicht mehr gültig. Bitte entferne ihn.",
     INVALID_START_DATE: () => "Bitte wähle ein gültiges Startdatum für diesen Artikel.",
+    MIXED_BILLING_INTERVALS: () => "Wöchentliche und monatliche Mieten müssen getrennt bestellt werden. Bitte bezahle jeweils eine Abrechnungsperiode pro Bestellung.",
   },
 } as const;
 

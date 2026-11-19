@@ -14,7 +14,7 @@ Schema id: `leihfluss.product-package/1`. Working examples: [`docs/examples/pack
 | Section | Content |
 | --- | --- |
 | `externalId` | Stable id. Re-sending a not-yet-imported package replaces it; an imported id is refused (no duplicates). |
-| `rentalMode` | `standard` (weekly/monthly) or `occasion` (day-based, 1-7 days). |
+| `rentalMode` | `standard` (weekly/monthly) or `occasion` (daily rate, 1-7 days). |
 | `identity` | `brand`, `model`, `series`, `sku`, `identifiers{ean,gtin,mpn}`, `category{name}` |
 | `titles` | `de`, `en` |
 | `descriptions` | `shortDe`, `shortEn`, `longDe`, `longEn` |
@@ -22,7 +22,7 @@ Schema id: `leihfluss.product-package/1`. Working examples: [`docs/examples/pack
 | `specifications[]` | `{key,value,keyEn?,valueEn?}`, any number (first 80 kept). `key/value` is German; `keyEn/valueEn` is the optional English wording |
 | `delivery` | `{leadDays}` optional, 0-30 days before the earliest rental start (default 2) |
 | `tags[]` | strings |
-| `pricing` | standard: `{weekly, monthly}`. occasion: `{occasion:[{days,price}]}` |
+| `pricing` | standard: `{weekly, monthly}`. occasion: `{daily}` (price per day; legacy `{occasion:[{days,price}]}` is converted to a daily rate with a warning) |
 | `seo` | `metaTitle`, `metaDescription`, `keywords[]`, `canonicalUrl`, `ogTitle`, `ogDescription` |
 | `images[]` | `{url or file, origin, role, altDe, altEn, license, note, primary}` |
 | `sources[]` | `{type: url/pdf/photo/instruction/other, url, label, note}` |
@@ -32,8 +32,8 @@ New optional sections can be added later without breaking old packages; unknown 
 
 ## Validation
 
-- **INVALID (cannot import):** wrong `schema`, no title, bad `rentalMode`, standard without weekly **and** monthly price, occasion with no valid day prices (days must be whole numbers 1-7, price > 0, no duplicates).
-- **Warnings (import allowed):** missing brand, category, descriptions, SEO fields, alt text, sources; a licensed image with no license; fewer than five images; a longer occasion rental that costs less than a shorter one; over-long meta title/description.
+- **INVALID (cannot import):** wrong `schema`, no title, bad `rentalMode`, standard without weekly **and** monthly price, occasion without a daily price greater than 0.
+- **Warnings (import allowed):** missing brand, category, descriptions, SEO fields, alt text, sources; a licensed image with no license; fewer than five images; a legacy per-length occasion price list that had to be converted; over-long meta title/description.
 - Nothing is ever written from an invalid package.
 
 ## Images
@@ -52,11 +52,11 @@ Category and brand are matched against **existing** records, and only an exact m
 
 ## Occasion (short-term) rentals
 
-`rentalMode: "occasion"` stores explicit prices per day count (`1 day = 50, 2 days = 80, 3 days = 105 ...`), never a multiplied rate. The product page shows those options instead of the weekly/monthly selector; cards show "from" the lowest option. At checkout the server prices the line from the stored options and refuses a day count the product does not offer, ignoring the browser's price. Standard weekly/monthly pricing is unchanged. Occasion products are never required to have weekly or monthly prices.
+`rentalMode: "occasion"` stores one **daily rate** (`pricing.daily`, e.g. 50). The customer picks 1 to 7 days and pays `daily rate x days` (1 day = 50, 2 = 100, 3 = 150, 7 = 350) **once** at checkout; there is never a subscription for an occasion product. The server calculates the amount from the stored rate and refuses any day count outside 1-7. Delivery fee and deposit are added once. Occasion products are never required to have weekly or monthly prices.
 
 ## After import
 
-Occasion day prices and the delivery lead time can be edited at any time from the draft review screen or the product editor (**Rental terms** card): change a price, add a day option, remove one. The server enforces days 1-7, unique days and price > 0. No re-import is needed.
+The occasion daily rate and the delivery lead time can be edited at any time from the draft review screen or the product editor (**Rental terms** card): change the daily price. The server enforces a price greater than 0. No re-import is needed.
 
 ## Catalog reset
 

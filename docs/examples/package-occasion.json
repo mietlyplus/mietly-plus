@@ -13,12 +13,7 @@
     { "de": "Gebläse", "en": "Blower", "quantity": 1 }
   ],
   "specifications": [{ "key": "Maße", "value": "3,5 x 3,5 m" }],
-  "pricing": {
-    "occasion": [
-      { "days": 1, "price": 50 }, { "days": 2, "price": 80 }, { "days": 3, "price": 105 },
-      { "days": 4, "price": 130 }, { "days": 5, "price": 150 }, { "days": 6, "price": 165 }, { "days": 7, "price": 180 }
-    ]
-  },
+  "pricing": { "daily": 50 },
   "seo": {
     "metaTitle": "Hüpfburg mieten für Kindergeburtstag | Leihfluss",
     "metaDescription": "Hüpfburg Regenbogen tageweise mieten, 1 bis 7 Tage. Ideal für Kinderfeiern."

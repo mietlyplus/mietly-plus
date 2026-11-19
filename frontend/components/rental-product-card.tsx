@@ -64,7 +64,6 @@ export function RentalProductCard({
   const effectiveOfferPrice = useMonthly ? monthlyOfferPrice : offerPrice;
   const hasOffer = useMonthly ? monthlyHasOffer : hasWeeklyOffer;
   const discountPercent = hasOffer ? Math.round(((effectiveBuyerPrice - effectiveOfferPrice) / effectiveBuyerPrice) * 100) : 0;
-  const shortDescription = stripHtml(product.shortDescriptionI18n?.en || product.shortDescription || "");
 
   let effectivePrice: number;
   if (hasOffer) {
@@ -79,6 +78,12 @@ export function RentalProductCard({
   const isOccasion = occasionOptions.length > 0;
   if (isOccasion) effectivePrice = occasionOptions[0].price;
   const t = cardCopy[locale];
+  // The visitor's language first; the single legacy text, then the other
+  // language, only when that one is empty.
+  const otherLocale = locale === "de" ? "en" : "de";
+  const shortDescription = stripHtml(
+    product.shortDescriptionI18n?.[locale] || product.shortDescription || product.shortDescriptionI18n?.[otherLocale] || ""
+  );
   const priceUnit = isOccasion
     ? `/ ${occasionOptions[0].days} ${occasionOptions[0].days > 1 ? t.days : t.day}`
     : useMonthly ? `/ ${t.month}` : `/ ${t.week}`;

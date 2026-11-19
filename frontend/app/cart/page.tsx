@@ -18,6 +18,8 @@ import { buildProductPath } from "@/lib/product-path";
 import { CartItem, CheckoutQuote } from "@/lib/types";
 import { durationLabel, localizeIssue } from "@/lib/rental-copy";
 import { useSiteLocale } from "@/lib/use-site-locale";
+import { PaymentBreakdown } from "@/components/payment-breakdown";
+import { euro, lineSummary, paymentCopy } from "@/lib/payment-copy";
 
 const cartCopy = {
   en: {
@@ -133,6 +135,11 @@ export default function CartPage() {
   const deliveryTotal = quote ? quote.totals.deliveryTotal : localDeliveryTotal;
   const grandTotal = quote ? quote.totals.total : localSubtotal + localDepositsTotal + localDeliveryTotal;
 
+  const displayTotals = quote
+    ? quote.totals
+    : { subtotal, depositTotal: depositsTotal, deliveryTotal, total: grandTotal, dueToday: grandTotal };
+  const payCopy = paymentCopy(locale);
+
   const priceChanged =
     Boolean(quote) && Math.abs(grandTotal - (localSubtotal + localDepositsTotal + localDeliveryTotal)) >= 0.01;
   const cartIssues = quote?.issues ?? [];
@@ -216,6 +223,9 @@ export default function CartPage() {
                       <p className="mt-1 text-sm text-zinc-700">
                         {t.rental} <span className="font-semibold">{durationLabel(item.durationValue, item.durationUnit, locale)}</span>
                       </p>
+                      {lineSummary(quoteLine, locale).map((text) => (
+                        <p key={text} className="mt-1 text-sm font-medium text-zinc-800">{text}</p>
+                      ))}
                       <p className="mt-1 text-sm text-zinc-700">
                         {t.startDate} <span className="font-semibold">{item.startDate}</span>
                       </p>
@@ -244,12 +254,22 @@ export default function CartPage() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm text-zinc-500">{t.itemTotal}</p>
-                      <p className="text-2xl font-extrabold text-zinc-900">EUR {formatAmount(lineSubtotal)}</p>
+                      {quoteLine?.billingType === "recurring" ? (
+                        <>
+                          <p className="text-sm text-zinc-500">{payCopy.dueToday}</p>
+                          <p className="text-2xl font-extrabold text-zinc-900">{euro(quoteLine.lineDueToday ?? 0, locale)}</p>
+                          <p className="mt-1 text-xs text-zinc-600">{payCopy.totalRental}: {euro(lineSubtotal, locale)}</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-sm text-zinc-500">{t.itemTotal}</p>
+                          <p className="text-2xl font-extrabold text-zinc-900">EUR {formatAmount(lineSubtotal)}</p>
+                        </>
+                      )}
                       {lineDeposit > 0 ? (
-                        <p className="mt-1 text-xs text-zinc-600">+ {t.deposit} EUR {formatAmount(lineDeposit)}</p>
+                        <p className="mt-1 text-xs text-zinc-600">+ {t.deposit} EUR {formatAmount(lineDeposit)}{quoteLine?.billingType === "recurring" ? ` (${payCopy.oneTimeNote})` : ""}</p>
                       ) : null}
-                      <p className="mt-1 text-xs text-zinc-600">+ {t.delivery} EUR {formatAmount(lineDelivery)}</p>
+                      <p className="mt-1 text-xs text-zinc-600">+ {t.delivery} EUR {formatAmount(lineDelivery)}{quoteLine?.billingType === "recurring" && lineDelivery > 0 ? ` (${payCopy.oneTimeNote})` : ""}</p>
                       {lineIssue ? (
                         <p className="mt-2 max-w-[16rem] text-xs font-semibold text-rose-600">{lineIssue}</p>
                       ) : null}
@@ -262,25 +282,8 @@ export default function CartPage() {
 
             <aside className="h-fit rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
               <h2 className="text-xl font-bold text-zinc-900">{t.summary}</h2>
-              <div className="mt-4 space-y-2 text-sm text-zinc-700">
-                <div className="flex items-center justify-between">
-                  <span>{t.subtotal}</span>
-                  <span>EUR {formatAmount(subtotal)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>{t.deposit}</span>
-                  <span>EUR {formatAmount(depositsTotal)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>{t.delivery}</span>
-                  <span>EUR {formatAmount(deliveryTotal)}</span>
-                </div>
-              </div>
-              <div className="mt-4 border-t border-zinc-200 pt-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold text-zinc-800">{t.total}</span>
-                  <span className="text-2xl font-extrabold text-lime-700">EUR {formatAmount(grandTotal)}</span>
-                </div>
+              <div className="mt-4">
+                <PaymentBreakdown billing={quote?.billing} totals={displayTotals} locale={locale} />
               </div>
               <Link
                 href="/checkout"

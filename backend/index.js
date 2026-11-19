@@ -24,7 +24,20 @@ const SupportRequest = require("./models/SupportRequest");
 const Order = require("./models/Order");
 const ProductDraft = require("./models/ProductDraft");
 const StripeWebhookEvent = require("./models/StripeWebhookEvent");
-const { getProductRentalLimits, priceOrderItem, sumOrderTotals } = require("./lib/pricing");
+const { getProductRentalLimits, getOccasionDailyRate, getOccasionOptions, priceOrderItem, sumOrderTotals } = require("./lib/pricing");
+const { planBilling } = require("./lib/billing");
+const {
+  RECURRING_EVENT_TYPES,
+  activateRecurringOrder,
+  ensureFixedTermSchedule,
+  idOf,
+  metadataOfEvent,
+  nextBillingDateOfInvoice,
+  recordFailedPayment,
+  recordPaidInvoice,
+  recordSubscriptionEnded,
+  subscriptionIdOfEvent,
+} = require("./lib/recurring-billing");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -827,7 +840,7 @@ async function runRentalEndingReminderSweep() {
 
   const targetDateKey = target.toISOString().slice(0, 10);
   const orders = await Order.find({
-    paymentStatus: "paid",
+    paymentStatus: { $in: ["paid", "partially_paid"] },
     status: { $ne: "cancelled" },
     fulfillmentStatus: { $nin: ["cancelled", "returned"] },
   }).select(
@@ -1019,7 +1032,9 @@ function mapProduct(product) {
     specifications: product.specifications || [],
     seo: product.seo || {},
     rentalMode: product.rentalMode || "standard",
-    occasionPricing: (product.occasionPricing || []).map((o) => ({ days: o.days, price: o.price })),
+    occasionDailyRate: getOccasionDailyRate(product),
+    // Derived (daily rate x 1..7 days) so the storefront shows what is charged.
+    occasionPricing: getOccasionOptions(product),
     model: product.model || "",
     series: product.series || "",
     identifiers: { ean: product.identifiers?.ean || "", gtin: product.identifiers?.gtin || "", mpn: product.identifiers?.mpn || "" },
@@ -1149,6 +1164,7 @@ function mapOrder(order) {
           lineDeposit: item.lineDeposit || 0,
           lineDelivery: item.lineDelivery || 0,
           lineTotal: item.lineTotal || 0,
+          billingType: item.billingType || "one_time",
         }))
       : [],
     currency: WEBSITE_CURRENCY.toUpperCase(),
@@ -1159,6 +1175,24 @@ function mapOrder(order) {
     status: order.status || "pending_payment",
     fulfillmentStatus: order.fulfillmentStatus || "pending",
     paymentStatus: order.paymentStatus || "unpaid",
+    // One-time orders (all historical orders) have no recurring block.
+    billingMode: order.billingMode || "one_time",
+    recurring: order.recurring
+      ? {
+          interval: order.recurring.interval,
+          billingCycles: order.recurring.billingCycles,
+          successfulCycles: order.recurring.successfulCycles || 0,
+          recurringAmount: order.recurring.recurringAmount || 0,
+          totalRentalCommitment: order.recurring.totalRentalCommitment || 0,
+          oneTimeCharges: order.recurring.oneTimeCharges || 0,
+          dueToday: order.recurring.dueToday || 0,
+          nextBillingDate: order.recurring.nextBillingDate ? new Date(order.recurring.nextBillingDate).toISOString() : "",
+          status: order.recurring.status || "pending",
+          lastPaymentAt: order.recurring.lastPaymentAt ? new Date(order.recurring.lastPaymentAt).toISOString() : "",
+        }
+      : null,
+    stripeSubscriptionId: order.stripeSubscriptionId || "",
+    stripeSubscriptionScheduleId: order.stripeSubscriptionScheduleId || "",
     stripeCheckoutSessionId: order.stripeCheckoutSessionId || "",
     stripePaymentIntentId: order.stripePaymentIntentId || "",
     rentalEndDate: rentalEndDate ? rentalEndDate.toISOString() : "",
@@ -2248,13 +2282,17 @@ app.patch("/api/admin/products/:id/rental-terms", requireAdminAuth, async (req, 
   const product = await Product.findById(req.params.id);
   if (!product) return res.status(404).json({ message: "Product not found." });
 
-  if (req.body?.occasionPricing !== undefined) {
+  if (req.body?.occasionDailyRate !== undefined || req.body?.occasionPricing !== undefined) {
     if (product.rentalMode !== "occasion") {
-      return res.status(400).json({ message: "Day-based prices apply to occasion products only." });
+      return res.status(400).json({ message: "A daily price applies to occasion products only." });
     }
-    const checked = normalizeOccasionOptions(req.body.occasionPricing);
+    const checked =
+      req.body.occasionDailyRate !== undefined
+        ? normalizeDailyRate(req.body.occasionDailyRate)
+        : dailyRateFromLegacyOptions(req.body.occasionPricing);
     if (checked.errors.length) return res.status(400).json({ message: checked.errors[0], errors: checked.errors });
-    product.occasionPricing = checked.options;
+    product.occasionDailyRate = checked.rate;
+    product.occasionPricing = [];
   }
   if (req.body?.deliveryLeadDays !== undefined) {
     const days = parseDeliveryLeadDays(req.body.deliveryLeadDays);
@@ -2264,7 +2302,8 @@ app.patch("/api/admin/products/:id/rental-terms", requireAdminAuth, async (req, 
   await product.save();
   return res.json({
     rentalMode: product.rentalMode,
-    occasionPricing: (product.occasionPricing || []).map((o) => ({ days: o.days, price: o.price })),
+    occasionDailyRate: getOccasionDailyRate(product),
+    occasionPricing: getOccasionOptions(product),
     deliveryLeadDays: product.deliveryLeadDays,
   });
 });
@@ -2312,7 +2351,7 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
     deliveryFee = 0,
     deliveryLeadDays,
     rentalMode,
-    occasionPricing,
+    occasionDailyRate,
     verificationRequired = true,
     depositEnabled = false,
     securityDeposit = 0,
@@ -2336,13 +2375,13 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
   if (!["standard", "occasion"].includes(nextRentalMode)) {
     return res.status(400).json({ message: "rentalMode must be standard or occasion." });
   }
-  let nextOccasionPricing = null;
-  if (occasionPricing !== undefined) {
-    const checked = normalizeOccasionOptions(occasionPricing);
+  let nextDailyRate = null;
+  if (occasionDailyRate !== undefined) {
+    const checked = normalizeDailyRate(occasionDailyRate);
     if (nextRentalMode === "occasion" && checked.errors.length) {
       return res.status(400).json({ message: checked.errors[0], errors: checked.errors });
     }
-    nextOccasionPricing = nextRentalMode === "occasion" ? checked.options : [];
+    nextDailyRate = nextRentalMode === "occasion" ? checked.rate : 0;
   }
   let nextLeadDays = null;
   if (deliveryLeadDays !== undefined) {
@@ -2433,7 +2472,10 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
   product.deliveryFee = Math.max(0, Number(deliveryFee) || 0);
   if (nextLeadDays !== null) product.deliveryLeadDays = nextLeadDays;
   product.rentalMode = nextRentalMode;
-  if (nextOccasionPricing !== null) product.occasionPricing = nextOccasionPricing;
+  if (nextDailyRate !== null) {
+    product.occasionDailyRate = nextDailyRate;
+    product.occasionPricing = [];
+  }
   product.verificationRequired = Boolean(verificationRequired);
   product.depositEnabled = Boolean(depositEnabled);
   product.securityDeposit = Boolean(depositEnabled) ? Number(securityDeposit) || 0 : 0;
@@ -2476,9 +2518,9 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
   const wasActive = product.isActive === true;
   const wantsActive = Boolean(isActive);
   if (nextRentalMode === "occasion" && wantsActive) {
-    const effective = nextOccasionPricing ?? product.occasionPricing ?? [];
-    if (effective.length === 0) {
-      return res.status(400).json({ message: "An occasion product needs at least one day-based price (1-7 days) to be active." });
+    const effective = nextDailyRate ?? getOccasionDailyRate(product);
+    if (!(effective > 0)) {
+      return res.status(400).json({ message: "An occasion product needs a daily price greater than 0 to be active." });
     }
   }
 
@@ -3005,7 +3047,7 @@ app.get("/api/admin/product-drafts/:id", requireAdminAuth, async (req, res) => {
 // goes through the same review and explicit publication as every other draft.
 // ---------------------------------------------------------------------------
 const ProductPackage = require("./models/ProductPackage");
-const { normalizeOccasionOptions } = require("./lib/occasion-pricing");
+const { normalizeDailyRate, dailyRateFromLegacyOptions } = require("./lib/occasion-pricing");
 const { parseDeliveryLeadDays, checkStartDate } = require("./lib/delivery-lead-time");
 const { validateProductPackage, buildPackageProductPayload } = require("./lib/product-package");
 const { buildSlug: buildPackageSlug, matchCategory: matchPackageCategory, matchBrand: matchPackageBrand } = require("./lib/product-payload");
@@ -4397,6 +4439,7 @@ const CHECKOUT_PRODUCT_FIELDS = [
   "monthlyBuyerPrice",
   "monthlyOfferPrice",
   "rentalMode",
+  "occasionDailyRate",
   "occasionPricing",
   "deliveryLeadDays",
   "minimumRentalMonths",
@@ -4557,10 +4600,45 @@ function priceCartLines(requestedLines, productById) {
       lineDelivery: pricedItem.lineDelivery,
       lineTotal: pricedItem.lineTotal,
       verificationRequired: pricedItem.verificationRequired,
+      billingType: pricedItem.billingType,
+      // What this line costs at checkout and per following period.
+      lineDueToday: roundMoney(pricedItem.dueTodayRental + pricedItem.lineDeposit + pricedItem.lineDelivery),
+      recurringPerPeriod: roundMoney(pricedItem.recurringPerUnit * pricedItem.quantity),
+      remainingPayments: pricedItem.billingType === "recurring" ? pricedItem.durationValue - 1 : 0,
     });
   }
 
   return { lines, pricedItems, errors };
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+// The billing shape the storefront shows and the checkout creates. Derived only
+// from priced (server-side) items.
+function describeCartBilling(pricedItems, totals) {
+  const plan = planBilling(pricedItems);
+  if (!plan.ok) return { plan, billing: null };
+  return {
+    plan,
+    billing: {
+      mode: plan.mode,
+      interval: plan.interval,
+      billingCycles: plan.cycles,
+      dueToday: totals.dueToday,
+      totalRental: totals.subtotal,
+      oneTimeCharges: roundMoney(totals.depositTotal + totals.deliveryTotal),
+      recurringAmount: plan.recurringAmount,
+      // Payments after today, as runs of an equal amount.
+      upcoming: plan.schedule.length
+        ? [
+            ...(plan.schedule[0].payments > 1 ? [{ payments: plan.schedule[0].payments - 1, amount: plan.schedule[0].amount }] : []),
+            ...plan.schedule.slice(1),
+          ]
+        : [],
+    },
+  };
 }
 
 // Read-only pricing preview. The storefront calls this to show the same amounts
@@ -4574,7 +4652,8 @@ app.post("/api/payments/checkout-quote", async (req, res) => {
       currency: WEBSITE_CURRENCY,
       lines: [],
       issues: [],
-      totals: { subtotal: 0, depositTotal: 0, deliveryTotal: 0, total: 0 },
+      totals: { subtotal: 0, depositTotal: 0, deliveryTotal: 0, total: 0, dueToday: 0 },
+      billing: { mode: "one_time", interval: "", billingCycles: 1, dueToday: 0, totalRental: 0, oneTimeCharges: 0, recurringAmount: 0, upcoming: [] },
       requiresIdentityVerification: false,
       valid: true,
     });
@@ -4589,12 +4668,15 @@ app.post("/api/payments/checkout-quote", async (req, res) => {
   const { lines, pricedItems, errors } = priceCartLines(requestedLines, productById);
   const issues = [...intentErrors, ...errors];
   const totals = sumOrderTotals(pricedItems);
+  const { plan, billing } = describeCartBilling(pricedItems, totals);
+  if (!plan.ok) issues.push({ lineId: "", productId: "", code: plan.code, message: plan.message });
 
   return res.json({
     currency: WEBSITE_CURRENCY,
     lines,
     issues,
     totals,
+    billing,
     requiresIdentityVerification: pricedItems.some((item) => item.verificationRequired),
     valid: issues.length === 0 && pricedItems.length === items.length,
   });
@@ -4677,6 +4759,19 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
     return res.status(400).json({ message: "Order total must be greater than zero." });
   }
 
+  // Standard rentals longer than one period are billed per period for a fixed
+  // term; everything else is a single payment. Decided here from priced items.
+  const { plan } = describeCartBilling(pricedItems, totals);
+  if (!plan.ok) {
+    return res.status(400).json({
+      message: plan.message,
+      issues: [{ lineId: "", productId: "", code: plan.code, message: plan.message }],
+      lines,
+      currency: WEBSITE_CURRENCY,
+    });
+  }
+  const isRecurring = plan.mode === "recurring";
+
   // Precondition, not a price. `expectedTotal` is the figure the customer just
   // approved; it is only ever compared against the server's own total and can
   // never raise, lower or otherwise influence what is charged. A mismatch means
@@ -4708,7 +4803,16 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
     const expectedCents = expectedTotalIsUsable ? Math.round(expectedTotal * 100) : null;
     const authoritativeCents = Math.round(totals.total * 100);
 
-    if (expectedCents === null || expectedCents !== authoritativeCents) {
+    // The amount due today must match too, when the client states it: it is the
+    // figure a recurring-rental customer actually pays at checkout.
+    const expectedDueRaw = req.body?.expectedDueToday;
+    const dueMismatch =
+      expectedDueRaw !== undefined &&
+      expectedDueRaw !== null &&
+      expectedDueRaw !== "" &&
+      Math.round(Number(expectedDueRaw) * 100) !== Math.round(totals.dueToday * 100);
+
+    if (expectedCents === null || expectedCents !== authoritativeCents || dueMismatch) {
       return res.status(409).json({
         code: "PRICE_CHANGED",
         message:
@@ -4717,23 +4821,56 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
         lines,
         issues: [],
         totals,
+        billing: describeCartBilling(pricedItems, totals).billing,
         requiresIdentityVerification: pricedItems.some((item) => item.verificationRequired),
         valid: true,
       });
     }
   }
 
-  const lineItems = pricedItems.map((item) => ({
-    quantity: item.quantity,
-    price_data: {
-      currency: WEBSITE_CURRENCY,
-      unit_amount: Math.round(item.perUnitChargeable * 100),
-      product_data: {
-        name: item.title,
-        description: `Rental period: ${formatRentalPeriodLabel(item.durationValue, item.durationUnit)}`,
+  const toCents = (amount) => Math.round(amount * 100);
+  const lineItems = [];
+  pricedItems.forEach((item, index) => {
+    const periodLabel = formatRentalPeriodLabel(item.durationValue, item.durationUnit);
+    if (item.billingType === "recurring") {
+      // The rental price recurs once per period for the fixed term...
+      lineItems.push({
+        quantity: item.quantity,
+        price_data: {
+          currency: WEBSITE_CURRENCY,
+          unit_amount: toCents(item.recurringPerUnit),
+          recurring: { interval: plan.interval, interval_count: 1 },
+          product_data: {
+            name: item.title,
+            description: `Rental period: ${periodLabel}, billed every ${item.durationUnit}`,
+            // Lets the webhook map the subscription item back to this order line.
+            metadata: { leihflussLine: String(index) },
+          },
+        },
+      });
+      // ...while delivery and deposit are charged once, with the first payment.
+      const oneTimePerUnit = roundMoney(item.securityDeposit + item.deliveryFee);
+      if (oneTimePerUnit > 0) {
+        lineItems.push({
+          quantity: item.quantity,
+          price_data: {
+            currency: WEBSITE_CURRENCY,
+            unit_amount: toCents(oneTimePerUnit),
+            product_data: { name: `${item.title}: delivery and deposit (one-time)` },
+          },
+        });
+      }
+      return;
+    }
+    lineItems.push({
+      quantity: item.quantity,
+      price_data: {
+        currency: WEBSITE_CURRENCY,
+        unit_amount: toCents(item.perUnitChargeable),
+        product_data: { name: item.title, description: `Rental period: ${periodLabel}` },
       },
-    },
-  }));
+    });
+  });
 
   const orderNumber = buildOrderNumber();
   const order = await Order.create({
@@ -4765,6 +4902,7 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
       lineDeposit: item.lineDeposit,
       lineDelivery: item.lineDelivery,
       lineTotal: item.lineTotal,
+      billingType: item.billingType,
     })),
     currency: WEBSITE_CURRENCY,
     subtotal: totals.subtotal,
@@ -4774,6 +4912,18 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
     status: "pending_payment",
     fulfillmentStatus: "pending",
     paymentStatus: "unpaid",
+    billingMode: isRecurring ? "recurring" : "one_time",
+    recurring: isRecurring
+      ? {
+          interval: plan.interval,
+          billingCycles: plan.cycles,
+          recurringAmount: plan.recurringAmount,
+          totalRentalCommitment: totals.subtotal,
+          oneTimeCharges: roundMoney(totals.depositTotal + totals.deliveryTotal),
+          dueToday: totals.dueToday,
+          status: "pending",
+        }
+      : undefined,
   });
 
   if (!user.stripeCustomerId) {
@@ -4790,15 +4940,18 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
   }
 
   const frontendBaseUrl = getFrontendBaseUrl();
+  const orderMetadata = {
+    orderId: String(order._id),
+    orderNumber: order.orderNumber,
+    userId: String(user._id),
+  };
   const checkoutSession = await stripe.checkout.sessions.create({
-    mode: "payment",
+    mode: isRecurring ? "subscription" : "payment",
     customer: user.stripeCustomerId,
     line_items: lineItems,
-    metadata: {
-      orderId: String(order._id),
-      orderNumber: order.orderNumber,
-      userId: String(user._id),
-    },
+    metadata: orderMetadata,
+    // Copied onto the subscription so recurring invoices can be matched to the order.
+    ...(isRecurring ? { subscription_data: { metadata: orderMetadata } } : {}),
     success_url: `${frontendBaseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${frontendBaseUrl}/checkout?canceled=1`,
   });
@@ -4817,12 +4970,20 @@ app.post("/api/payments/checkout-session", requireUserAuth, async (req, res) => 
     depositTotal: totals.depositTotal,
     deliveryTotal: totals.deliveryTotal,
     total: totals.total,
+    dueToday: totals.dueToday,
+    billingMode: isRecurring ? "recurring" : "one_time",
   });
 });
 
 // Single place where an order transitions to paid. Safe to call repeatedly:
 // the paymentStatus guard makes a redelivered webhook or a page refresh a no-op.
 async function applyPaidCheckoutSession(order, checkoutSession) {
+  // The first payment of a recurring rental is NOT the whole rental: the order
+  // becomes active and "partially_paid" until every booked period is paid.
+  if (order.billingMode === "recurring" && order.recurring) {
+    return applyPaidRecurringCheckout(order, checkoutSession);
+  }
+
   if (order.paymentStatus === "paid") {
     return { changed: false, order };
   }
@@ -4837,8 +4998,24 @@ async function applyPaidCheckoutSession(order, checkoutSession) {
   return { changed: true, order };
 }
 
+async function applyPaidRecurringCheckout(order, checkoutSession) {
+  let changed = false;
+  const subscriptionId = idOf(checkoutSession?.subscription);
+  if (subscriptionId && order.stripeSubscriptionId !== subscriptionId) {
+    order.stripeSubscriptionId = subscriptionId;
+    changed = true;
+  }
+  if (activateRecurringOrder(order)) changed = true;
+  // The checkout's own invoice is the first paid period. Counted by id, so the
+  // matching invoice.paid event later is a no-op.
+  if (recordPaidInvoice(order, idOf(checkoutSession?.invoice))) changed = true;
+
+  if (changed) await order.save();
+  return { changed, order };
+}
+
 async function markCheckoutSessionUnpaid(order) {
-  if (order.paymentStatus === "paid") {
+  if (order.paymentStatus === "paid" || order.paymentStatus === "partially_paid") {
     return { changed: false, order };
   }
   if (order.status === "pending_payment") {
@@ -4911,6 +5088,87 @@ async function resolveOrderForStripeEvent(stripeEvent) {
   }
 
   return { order: byMetadata, matchedBy: "metadata", mismatch: null };
+}
+
+/**
+ * Locates the Order an invoice / subscription event belongs to.
+ *
+ * Primary match is the subscription id stored on the order. The first invoice
+ * can arrive before that id is stored, so the metadata copied onto the
+ * subscription (and, as a last resort, the subscription fetched from Stripe) is
+ * used, and verified against the order before it is trusted.
+ */
+async function resolveOrderForSubscriptionEvent(stripeEvent, stripeClient = stripe) {
+  const subscriptionId = subscriptionIdOfEvent(stripeEvent);
+  if (!subscriptionId) return { order: null, matchedBy: null, mismatch: null };
+
+  const bySubscription = await Order.findOne({ stripeSubscriptionId: subscriptionId });
+  if (bySubscription) return { order: bySubscription, matchedBy: "subscriptionId", mismatch: null };
+
+  let metadata = metadataOfEvent(stripeEvent);
+  if (!mongoose.Types.ObjectId.isValid(String(metadata.orderId || "")) && stripeClient) {
+    const subscription = await stripeClient.subscriptions.retrieve(subscriptionId);
+    metadata = subscription?.metadata || {};
+  }
+
+  const metadataOrderId = String(metadata.orderId || "").trim();
+  if (!mongoose.Types.ObjectId.isValid(metadataOrderId)) return { order: null, matchedBy: null, mismatch: null };
+
+  const byMetadata = await Order.findById(metadataOrderId);
+  if (!byMetadata) return { order: null, matchedBy: null, mismatch: null };
+
+  if (metadata.orderNumber && byMetadata.orderNumber !== String(metadata.orderNumber)) {
+    return { order: null, matchedBy: null, mismatch: "orderNumber" };
+  }
+  if (metadata.userId && String(byMetadata.userId) !== String(metadata.userId)) {
+    return { order: null, matchedBy: null, mismatch: "userId" };
+  }
+  if (byMetadata.billingMode !== "recurring" || !byMetadata.recurring) {
+    return { order: null, matchedBy: null, mismatch: "billingMode" };
+  }
+  const stored = String(byMetadata.stripeSubscriptionId || "").trim();
+  if (stored && stored !== subscriptionId) return { order: null, matchedBy: null, mismatch: "subscriptionId" };
+
+  if (!stored) {
+    byMetadata.stripeSubscriptionId = subscriptionId;
+    await byMetadata.save();
+  }
+  return { order: byMetadata, matchedBy: "metadata", mismatch: null };
+}
+
+/**
+ * Applies a recurring-billing event to its order. Idempotent: counting is keyed
+ * by invoice id and every transition is a guarded no-op when repeated.
+ */
+async function processRecurringEvent(stripeEvent, order, stripeClient = stripe) {
+  const object = stripeEvent.data.object || {};
+  const subscriptionId = subscriptionIdOfEvent(stripeEvent);
+  let changed = false;
+
+  if (stripeEvent.type === "invoice.paid") {
+    if (activateRecurringOrder(order)) changed = true;
+    if (subscriptionId && order.stripeSubscriptionId !== subscriptionId) {
+      order.stripeSubscriptionId = subscriptionId;
+      changed = true;
+    }
+    const paidAt = Number(object.status_transitions?.paid_at) > 0 ? new Date(object.status_transitions.paid_at * 1000) : new Date();
+    if (recordPaidInvoice(order, idOf(object), { paidAt, nextBillingDate: nextBillingDateOfInvoice(object) })) changed = true;
+    if (changed) await order.save();
+    // The subscription must end by itself after the booked term. Done here as
+    // well as on checkout completion so either event is enough.
+    if (stripeClient && subscriptionId) await ensureFixedTermSchedule({ stripe: stripeClient, order, subscriptionId });
+    return;
+  }
+
+  if (stripeEvent.type === "invoice.payment_failed") {
+    const failedAt = Number(stripeEvent.created) > 0 ? new Date(stripeEvent.created * 1000) : new Date();
+    if (recordFailedPayment(order, failedAt)) await order.save();
+    return;
+  }
+
+  if (stripeEvent.type === "customer.subscription.deleted") {
+    if (recordSubscriptionEnded(order)) await order.save();
+  }
 }
 
 // A handler cannot outlive the 60s function limit, so a claim older than this
@@ -5028,13 +5286,16 @@ app.post(STRIPE_WEBHOOK_PATH, async (req, res) => {
     "checkout.session.async_payment_succeeded",
     "checkout.session.async_payment_failed",
     "checkout.session.expired",
+    ...RECURRING_EVENT_TYPES,
   ];
 
   if (!relevantTypes.includes(stripeEvent.type)) {
     return res.json({ received: true, ignored: true });
   }
 
-  const sessionId = extractCheckoutSessionId(stripeEvent);
+  const isRecurringEvent = RECURRING_EVENT_TYPES.includes(stripeEvent.type);
+  // An invoice that does not belong to a subscription (e.g. a manual one) is none of our business.
+  const sessionId = isRecurringEvent ? subscriptionIdOfEvent(stripeEvent) : extractCheckoutSessionId(stripeEvent);
   if (!sessionId) {
     return res.json({ received: true, ignored: true });
   }
@@ -5044,7 +5305,9 @@ app.post(STRIPE_WEBHOOK_PATH, async (req, res) => {
   // stop Stripe retrying a payment we never recorded.
   let resolution;
   try {
-    resolution = await resolveOrderForStripeEvent(stripeEvent);
+    resolution = isRecurringEvent
+      ? await resolveOrderForSubscriptionEvent(stripeEvent)
+      : await resolveOrderForStripeEvent(stripeEvent);
   } catch (error) {
     console.error("Stripe webhook order lookup failed:", error.message);
     return res.status(500).json({ message: "Could not resolve order for Stripe event." });
@@ -5116,16 +5379,21 @@ app.post(STRIPE_WEBHOOK_PATH, async (req, res) => {
   try {
     const sessionObject = stripeEvent.data.object || {};
 
-    if (
+    if (isRecurringEvent) {
+      await processRecurringEvent(stripeEvent, order);
+    } else if (
       stripeEvent.type === "checkout.session.completed" ||
       stripeEvent.type === "checkout.session.async_payment_succeeded"
     ) {
       if (sessionObject.payment_status === "paid") {
         await applyPaidCheckoutSession(order, sessionObject);
+        if (order.billingMode === "recurring" && order.recurring && idOf(sessionObject.subscription)) {
+          await ensureFixedTermSchedule({ stripe, order, subscriptionId: idOf(sessionObject.subscription) });
+        }
       }
     } else if (stripeEvent.type === "checkout.session.async_payment_failed") {
       await markCheckoutSessionUnpaid(order);
-    } else if (stripeEvent.type === "checkout.session.expired" && order.paymentStatus !== "paid") {
+    } else if (stripeEvent.type === "checkout.session.expired" && !["paid", "partially_paid"].includes(order.paymentStatus)) {
       order.status = "cancelled";
       order.fulfillmentStatus = "cancelled";
       await order.save();
@@ -5172,7 +5440,7 @@ app.post("/api/payments/checkout-confirm", requireUserAuth, async (req, res) => 
     return res.status(404).json({ message: "Order not found for this checkout session." });
   }
 
-  if (order.paymentStatus === "paid") {
+  if (order.paymentStatus === "paid" || order.paymentStatus === "partially_paid") {
     return res.json({
       message: "Order payment confirmed.",
       order: mapOrder(order),
@@ -5328,6 +5596,9 @@ module.exports.runRentalEndingReminderSweep = runRentalEndingReminderSweep;
 module.exports.applyPaidCheckoutSession = applyPaidCheckoutSession;
 module.exports.markCheckoutSessionUnpaid = markCheckoutSessionUnpaid;
 module.exports.resolveOrderForStripeEvent = resolveOrderForStripeEvent;
+module.exports.stripe = stripe;
 module.exports.claimStripeEvent = claimStripeEvent;
+module.exports.processRecurringEvent = processRecurringEvent;
+module.exports.resolveOrderForSubscriptionEvent = resolveOrderForSubscriptionEvent;
 module.exports.completeStripeEvent = completeStripeEvent;
 module.exports.STRIPE_EVENT_LEASE_MS = STRIPE_EVENT_LEASE_MS;

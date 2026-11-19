@@ -1260,6 +1260,8 @@ export async function createCheckoutSession(
      *  recalculates from the database and refuses on mismatch. It can never set
      *  or influence the amount charged. */
     expectedTotal?: number;
+    /** The amount due today, likewise a precondition only. */
+    expectedDueToday?: number;
     shippingAddress: {
       fullName: string;
       phone: string;
@@ -1622,9 +1624,9 @@ export function deleteProductPackage(adminToken: string, id: string) {
 export function updateRentalTerms(
   adminToken: string,
   productId: string,
-  body: { occasionPricing?: { days: number; price: number }[]; deliveryLeadDays?: number }
+  body: { occasionDailyRate?: number; deliveryLeadDays?: number }
 ) {
-  return adminJson<{ rentalMode: "standard" | "occasion"; occasionPricing: { days: number; price: number }[]; deliveryLeadDays: number }>(
+  return adminJson<{ rentalMode: "standard" | "occasion"; occasionDailyRate: number; occasionPricing: { days: number; price: number }[]; deliveryLeadDays: number }>(
     `/api/admin/products/${encodeURIComponent(productId)}/rental-terms`,
     adminToken,
     { method: "PATCH", body: JSON.stringify(body) }

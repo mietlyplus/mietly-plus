@@ -10,12 +10,34 @@
 
 const SUPPORTED_PERIOD_UNITS = ["week", "month"];
 const OCCASION_PERIOD_UNIT = "day";
+const MAX_OCCASION_DAYS = 7;
 
-function getOccasionOptions(product) {
-  return (product.occasionPricing || [])
-    .map((option) => ({ days: Number(option.days), price: roundCurrency(option.price) }))
+/**
+ * The daily rate of an occasion product. New products store `occasionDailyRate`.
+ * Occasion drafts created while the feature still used explicit per-length
+ * prices carry `occasionPricing` only: for those the 1-day price (or, failing
+ * that, the first option's price divided by its days) is the daily rate.
+ */
+function getOccasionDailyRate(product) {
+  const rate = roundCurrency(product?.occasionDailyRate);
+  if (rate > 0) return rate;
+  const legacy = (product?.occasionPricing || [])
+    .map((option) => ({ days: Number(option.days), price: Number(option.price) }))
     .filter((option) => Number.isInteger(option.days) && option.days >= 1 && option.days <= 7 && option.price > 0)
     .sort((a, b) => a.days - b.days);
+  if (legacy.length === 0) return 0;
+  const oneDay = legacy.find((option) => option.days === 1);
+  return roundCurrency(oneDay ? oneDay.price : legacy[0].price / legacy[0].days);
+}
+
+// 1 to 7 days, each charged as daily rate x days.
+function getOccasionOptions(product) {
+  const rate = getOccasionDailyRate(product);
+  if (rate <= 0) return [];
+  return Array.from({ length: MAX_OCCASION_DAYS }, (_, index) => ({
+    days: index + 1,
+    price: roundCurrency(rate * (index + 1)),
+  }));
 }
 
 function toNonNegativeNumber(value) {
@@ -240,9 +262,16 @@ function priceOrderItem(product, request = {}) {
   const lineDelivery = roundCurrency(deliveryFee * quantity);
   const lineTotal = roundCurrency(lineSubtotal + lineDeposit + lineDelivery);
 
+  // A rental longer than one period is billed per period (fixed term); the
+  // delivery fee and the deposit are one-time and never part of that.
+  const recurring = durationValue > 1;
+
   return {
     ok: true,
     item: {
+      billingType: recurring ? "recurring" : "one_time",
+      recurringPerUnit: recurring ? periodUnitPrice : 0,
+      dueTodayRental: recurring ? roundCurrency(periodUnitPrice * quantity) : lineSubtotal,
       quantity,
       durationValue,
       durationUnit: periodUnit,
@@ -265,9 +294,8 @@ function priceOrderItem(product, request = {}) {
 }
 
 /**
- * Occasion lines: the unit must be "day" and the day count must be exactly one of
- * the stored options. The charged price is that option's stored price, never a
- * multiplied rate and never anything the browser sent.
+ * Occasion lines: the unit must be "day" and the day count a whole number from
+ * 1 to 7. The charged price is the stored daily rate x days, once.
  */
 function priceOccasionItem(product, request, productTitle) {
   const unit = String(request.periodUnit || "").trim().toLowerCase();
@@ -298,6 +326,7 @@ function priceOccasionItem(product, request, productTitle) {
   const depositEnabled = Boolean(product.depositEnabled);
   const securityDeposit = depositEnabled ? roundCurrency(toNonNegativeNumber(product.securityDeposit)) : 0;
   const deliveryFee = roundCurrency(toNonNegativeNumber(product.deliveryFee));
+  // Daily rate x days, charged once. The browser never supplies an amount.
   const unitPrice = option.price;
   const lineSubtotal = roundCurrency(unitPrice * quantity);
   const lineDeposit = roundCurrency(securityDeposit * quantity);
@@ -306,12 +335,17 @@ function priceOccasionItem(product, request, productTitle) {
   return {
     ok: true,
     item: {
+      billingType: "one_time",
+      recurringPerUnit: 0,
+      dailyRate: getOccasionDailyRate(product),
+      dueTodayRental: lineSubtotal,
       quantity,
       durationValue: option.days,
       durationUnit: OCCASION_PERIOD_UNIT,
       unitPrice,
-      baseUnitPrice: unitPrice,
-      listUnitPrice: unitPrice,
+      // Per-day rate, like baseUnitPrice is the per-period rate of a standard line.
+      baseUnitPrice: getOccasionDailyRate(product),
+      listUnitPrice: getOccasionDailyRate(product),
       depositEnabled,
       securityDeposit,
       deliveryFee,
@@ -329,16 +363,25 @@ function sumOrderTotals(items) {
   const subtotal = roundCurrency(items.reduce((sum, item) => sum + item.lineSubtotal, 0));
   const depositTotal = roundCurrency(items.reduce((sum, item) => sum + item.lineDeposit, 0));
   const deliveryTotal = roundCurrency(items.reduce((sum, item) => sum + item.lineDelivery, 0));
+  const dueToday = roundCurrency(
+    items.reduce((sum, item) => sum + (item.dueTodayRental ?? item.lineSubtotal) + item.lineDeposit + item.lineDelivery, 0)
+  );
   return {
     subtotal,
     depositTotal,
     deliveryTotal,
+    // The full commitment (rental over the whole term + one-time fees).
     total: roundCurrency(subtotal + depositTotal + deliveryTotal),
+    // What is charged at checkout; below `total` for a recurring rental.
+    dueToday,
   };
 }
 
 module.exports = {
+  MAX_OCCASION_DAYS,
   OCCASION_PERIOD_UNIT,
+  getOccasionDailyRate,
+  getOccasionOptions,
   SUPPORTED_PERIOD_UNITS,
   getAvailablePeriodUnits,
   getProductRentalLimits,

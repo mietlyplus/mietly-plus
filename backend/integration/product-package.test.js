@@ -87,7 +87,8 @@ test("import creates PRIVATE drafts, matches only clear category/brand, and is n
 
   const castle = products.find((p) => p.rentalMode === "occasion");
   assert.ok(!castle.categoryId, "'Kinderfeiern' does not exist, so it is left for the owner to choose");
-  assert.equal(castle.occasionPricing.length, 7);
+  assert.equal(castle.occasionDailyRate, 50);
+  assert.equal(castle.occasionPricing.length, 0, "the legacy per-length list is not written; totals are daily rate x days");
 
   const again = await post("/api/admin/product-packages", { packages: [example("package-standard.json")] });
   assert.equal(again.body.results[0].status, "imported");
@@ -120,7 +121,7 @@ test("publication still needs explicit approval and taxonomy; occasion products 
   const bySlug = live.status === 200 ? live.body : (await call("/api/products", {}, false)).body.find?.((p) => p.rentalMode === "occasion");
   const served = bySlug?.product || bySlug;
   assert.equal(served.rentalMode, "occasion");
-  assert.deepEqual(served.occasionPricing.slice(0, 2), [{ days: 1, price: 50 }, { days: 2, price: 80 }]);
+  assert.deepEqual(served.occasionPricing.slice(0, 2), [{ days: 1, price: 50 }, { days: 2, price: 100 }]);
 });
 
 test("catalog archive hides active products without deleting, leaves drafts alone, and can be restored", async () => {
@@ -138,25 +139,23 @@ test("catalog archive hides active products without deleting, leaves drafts alon
   assert.equal(await Product.countDocuments({ isActive: true }), activeBefore);
 });
 
-test("occasion prices can be changed, added and removed after import, with server-side validation", async () => {
+test("the occasion daily rate can be changed after import, with server-side validation", async () => {
   const castle = await Product.findOne({ rentalMode: "occasion" });
   const patch = (id, body) => call(`/api/admin/products/${id}/rental-terms`, { method: "PATCH", body: JSON.stringify(body) });
 
-  const changed = await patch(castle._id, { occasionPricing: [{ days: 1, price: 60 }, { days: 2, price: 90 }, { days: 5, price: 140 }] });
+  const changed = await patch(castle._id, { occasionDailyRate: 60 });
   assert.equal(changed.status, 200);
-  assert.deepEqual(changed.body.occasionPricing, [{ days: 1, price: 60 }, { days: 2, price: 90 }, { days: 5, price: 140 }]);
-  assert.equal((await Product.findById(castle._id)).occasionPricing.length, 3, "removed options are really gone");
+  assert.equal(changed.body.occasionDailyRate, 60);
+  assert.deepEqual(changed.body.occasionPricing.slice(0, 3).map((o) => o.price), [60, 120, 180]);
+  assert.equal((await Product.findById(castle._id)).occasionDailyRate, 60);
 
-  for (const bad of [
-    [{ days: 8, price: 10 }], [{ days: 0, price: 10 }], [{ days: 2, price: 0 }], [{ days: 2, price: -5 }],
-    [{ days: 2, price: 10 }, { days: 2, price: 12 }], [],
-  ]) {
-    assert.equal((await patch(castle._id, { occasionPricing: bad })).status, 400, JSON.stringify(bad));
+  for (const bad of [0, -5, "abc", null, ""]) {
+    assert.equal((await patch(castle._id, { occasionDailyRate: bad })).status, 400, String(bad));
   }
-  assert.equal((await Product.findById(castle._id)).occasionPricing.length, 3, "a rejected edit changes nothing");
+  assert.equal((await Product.findById(castle._id)).occasionDailyRate, 60, "a rejected edit changes nothing");
 
   const standard = await Product.findOne({ rentalMode: "standard" });
-  assert.equal((await patch(standard._id, { occasionPricing: [{ days: 1, price: 5 }] })).status, 400, "standard products take no day prices");
+  assert.equal((await patch(standard._id, { occasionDailyRate: 5 })).status, 400, "standard products take no daily price");
   const before = [standard.buyerPrice, standard.monthlyBuyerPrice];
 
   assert.equal((await patch(standard._id, { deliveryLeadDays: 4 })).body.deliveryLeadDays, 4, "lead time works for standard products");

@@ -238,9 +238,9 @@ export default function ProductDraftReviewPage() {
           <div><dt className="inline text-zinc-500">Extraction: </dt>
             <dd className="inline">{draft.provenance.extractionConfidence || "—"} ({draft.provenance.usedStrategies.join(", ") || "none"})</dd></div>
           {draft.product?.rentalMode === "occasion" ? (
-            <div className="sm:col-span-2"><dt className="inline text-zinc-500">Occasion rental (day-based): </dt>
+            <div className="sm:col-span-2"><dt className="inline text-zinc-500">Occasion rental (1-7 days): </dt>
               <dd className="inline font-semibold">
-                {(draft.product.occasionPricing || []).map((o) => `${o.days}d €${o.price.toFixed(2)}`).join(" · ") || "no prices"}
+                {draft.product.occasionDailyRate ? `€${draft.product.occasionDailyRate.toFixed(2)} per day, paid once` : "no daily price"}
               </dd></div>
           ) : (
             <>
@@ -466,7 +466,7 @@ export default function ProductDraftReviewPage() {
 
       {product ? (
         <RentalTermsCard
-          key={`${product.id}-${product.deliveryLeadDays}-${JSON.stringify(product.occasionPricing)}`}
+          key={`${product.id}-${product.deliveryLeadDays}-${product.occasionDailyRate}`}
           token={token}
           product={product}
           onSaved={() => void load(token)}

@@ -103,7 +103,7 @@ test("an empty cart quotes to zero and is valid", async () => {
   const { status, body } = await postQuote([]);
   assert.equal(status, 200);
   assert.equal(body.valid, true);
-  assert.deepEqual(body.totals, { subtotal: 0, depositTotal: 0, deliveryTotal: 0, total: 0 });
+  assert.deepEqual(body.totals, { subtotal: 0, depositTotal: 0, deliveryTotal: 0, total: 0, dueToday: 0 });
 });
 
 test("a valid cart is priced from the catalogue, not from the request", async () => {
@@ -137,11 +137,22 @@ test("a valid cart is priced from the catalogue, not from the request", async ()
   assert.equal(line.categoryName, "Cameras");
   assert.equal(line.brandName, "Acme");
 
+  // 3 weeks is a fixed-term recurring rental: only the first week is due today.
+  assert.equal(line.billingType, "recurring");
+  assert.equal(line.recurringPerPeriod, 30, "2 cameras x 15 per week");
+  assert.equal(line.remainingPayments, 2);
+  assert.equal(line.lineDueToday, 240, "first week 30 + one-time deposit 200 + one-time delivery 10");
+
   assert.deepEqual(body.totals, {
     subtotal: 90,
     depositTotal: 200,
     deliveryTotal: 10,
     total: 300,
+    dueToday: 240,
+  });
+  assert.deepEqual(body.billing, {
+    mode: "recurring", interval: "week", billingCycles: 3, dueToday: 240, totalRental: 90,
+    oneTimeCharges: 210, recurringAmount: 30, upcoming: [{ payments: 2, amount: 30 }],
   });
   assert.equal(body.requiresIdentityVerification, true);
 });
@@ -246,7 +257,7 @@ test.before(() => {
     brand: "Leihfluss",
     isActive: true,
     rentalMode: "occasion",
-    occasionPricing: [{ days: 1, price: 50 }, { days: 2, price: 80 }, { days: 3, price: 105 }],
+    occasionDailyRate: 50,
     deliveryLeadDays: 3,
     buyerPrice: 0, monthlyPrice: 0, monthlyBuyerPrice: 0,
     maxRentalQuantity: 1,
@@ -271,15 +282,17 @@ test("occasion: the quote charges the stored price for the chosen days and ignor
   assert.equal(body.valid, true);
   const [line] = body.lines;
   assert.equal(line.durationUnit, "day");
-  assert.equal(line.unitPrice, 80, "2 days = 80");
+  assert.equal(line.unitPrice, 100, "2 days x 50 per day");
   assert.equal(line.lineDeposit, 30);
   assert.equal(line.lineDelivery, 10);
-  assert.equal(body.totals.total, 120);
+  assert.equal(body.totals.total, 140);
+  assert.equal(body.totals.dueToday, 140, "an occasion rental is paid in full at checkout");
+  assert.equal(body.billing.mode, "one_time");
 });
 
 test("occasion: an unoffered day count, the wrong unit, or a second unit over the limit is refused", async () => {
   for (const [overrides, code] of [
-    [{ durationValue: 5 }, "INVALID_DURATION"],
+    [{ durationValue: 8 }, "INVALID_DURATION"],
     [{ durationUnit: "week", durationValue: 1 }, "INVALID_PERIOD_UNIT"],
     [{ quantity: 2 }, "INVALID_QUANTITY"],
   ]) {

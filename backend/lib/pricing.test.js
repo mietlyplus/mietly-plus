@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const {
   getAvailablePeriodUnits,
+  getOccasionDailyRate,
   getProductRentalLimits,
   priceOrderItem,
   resolveDurationBounds,
@@ -323,46 +324,59 @@ function buildOccasion(overrides = {}) {
   return buildProduct({
     title: "Rainbow Castle",
     rentalMode: "occasion",
-    occasionPricing: [{ days: 1, price: 50 }, { days: 2, price: 80 }, { days: 3, price: 105 }, { days: 7, price: 180 }],
+    occasionDailyRate: 50,
     maxRentalQuantity: 2,
     ...overrides,
   });
 }
 
-test("occasion: charges the exact stored price for the requested day count, ignoring client amounts", () => {
-  const result = priceOrderItem(buildOccasion(), {
-    periodUnit: "day", durationValue: 2, quantity: 1, unitPrice: 1, lineTotal: 1, baseUnitPrice: 1, deliveryFee: 0,
-  });
-  assert.equal(result.ok, true);
-  assert.equal(result.item.unitPrice, 80, "2 days = 80, not 2 x 50");
-  assert.equal(result.item.durationUnit, "day");
-  assert.equal(result.item.lineTotal, 80);
+test("occasion: daily rate x selected days, charged once, ignoring client amounts", () => {
+  for (const [days, total] of [[1, 50], [2, 100], [3, 150], [7, 350]]) {
+    const result = priceOrderItem(buildOccasion(), {
+      periodUnit: "day", durationValue: days, quantity: 1, unitPrice: 1, lineTotal: 1, baseUnitPrice: 1, deliveryFee: 0,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.item.unitPrice, total, `${days} days`);
+    assert.equal(result.item.durationUnit, "day");
+    assert.equal(result.item.billingType, "one_time", "occasion rentals never recur");
+    assert.equal(result.item.dueTodayRental, total, "the whole occasion amount is due at checkout");
+  }
 });
 
 test("occasion: deposit, delivery fee and quantity come from the product", () => {
   const product = buildOccasion({ depositEnabled: true, securityDeposit: 20, deliveryFee: 9.9 });
   const result = priceOrderItem(product, { periodUnit: "day", durationValue: 3, quantity: 2 });
-  assert.equal(result.item.lineSubtotal, 210);
+  assert.equal(result.item.lineSubtotal, 300);
   assert.equal(result.item.lineDeposit, 40);
   assert.equal(result.item.lineDelivery, 19.8);
-  assert.equal(result.item.lineTotal, 269.8);
+  assert.equal(result.item.lineTotal, 359.8);
   assert.equal(priceOrderItem(product, { periodUnit: "day", durationValue: 3, quantity: 3 }).error.code, "INVALID_QUANTITY");
 });
 
-test("occasion: only configured day counts and only the day unit are accepted", () => {
+test("occasion: only 1-7 whole days and only the day unit are accepted", () => {
   const product = buildOccasion();
-  for (const durationValue of [4, 5, 6, 0, 8, 1.5, "abc"]) {
+  for (const durationValue of [0, 8, 1.5, "abc", -1]) {
     assert.equal(priceOrderItem(product, { periodUnit: "day", durationValue, quantity: 1 }).error.code, "INVALID_DURATION", String(durationValue));
+  }
+  for (const durationValue of [4, 5, 6]) {
+    assert.equal(priceOrderItem(product, { periodUnit: "day", durationValue, quantity: 1 }).ok, true, String(durationValue));
   }
   for (const periodUnit of ["week", "month", "", undefined]) {
     assert.equal(priceOrderItem(product, { periodUnit, durationValue: 1, quantity: 1 }).error.code, "INVALID_PERIOD_UNIT");
   }
 });
 
+test("occasion: a draft made with explicit per-length prices keeps working through its 1-day price", () => {
+  const legacy = buildOccasion({ occasionDailyRate: undefined, occasionPricing: [{ days: 1, price: 50 }, { days: 2, price: 80 }] });
+  assert.equal(getOccasionDailyRate(legacy), 50);
+  assert.equal(priceOrderItem(legacy, { periodUnit: "day", durationValue: 3, quantity: 1 }).item.unitPrice, 150);
+  const noOneDay = buildOccasion({ occasionDailyRate: undefined, occasionPricing: [{ days: 2, price: 80 }] });
+  assert.equal(getOccasionDailyRate(noOneDay), 40);
+});
+
 test("occasion: inactive, missing and unpriced products are refused", () => {
   assert.equal(priceOrderItem(buildOccasion({ isActive: false }), { periodUnit: "day", durationValue: 1, quantity: 1 }).error.code, "PRODUCT_INACTIVE");
-  assert.equal(priceOrderItem(buildOccasion({ occasionPricing: [] }), { periodUnit: "day", durationValue: 1, quantity: 1 }).error.code, "PRICE_UNAVAILABLE");
-  assert.equal(priceOrderItem(buildOccasion({ occasionPricing: [{ days: 9, price: 5 }, { days: 1, price: 0 }] }), { periodUnit: "day", durationValue: 1, quantity: 1 }).error.code, "PRICE_UNAVAILABLE");
+  assert.equal(priceOrderItem(buildOccasion({ occasionDailyRate: 0 }), { periodUnit: "day", durationValue: 1, quantity: 1 }).error.code, "PRICE_UNAVAILABLE");
 });
 
 test("standard products cannot be rented by the day, and occasion weekly prices are never used", () => {
@@ -374,7 +388,7 @@ test("standard products cannot be rented by the day, and occasion weekly prices 
 test("occasion limits tell the storefront exactly which day options exist", () => {
   const limits = getProductRentalLimits(buildOccasion(), "day");
   assert.deepEqual(limits.availableUnits, ["day"]);
-  assert.deepEqual(limits.occasionOptions.map((o) => o.days), [1, 2, 3, 7]);
+  assert.deepEqual(limits.occasionOptions.map((o) => [o.days, o.price]), [[1, 50], [2, 100], [3, 150], [4, 200], [5, 250], [6, 300], [7, 350]]);
   assert.equal(limits.minDuration, 1);
   assert.equal(limits.maxDuration, 7);
 });

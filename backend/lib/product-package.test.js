@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { validateProductPackage, buildPackageProductPayload } = require("./product-package");
-const { normalizeOccasionOptions, occasionPriceForDays } = require("./occasion-pricing");
+const { normalizeDailyRate, dailyRateFromLegacyOptions, occasionTotal } = require("./occasion-pricing");
 
 const example = (name) => JSON.parse(fs.readFileSync(path.join(__dirname, "../../docs/examples", name), "utf8"));
 
@@ -20,35 +20,45 @@ test("the documented standard example validates and keeps weekly/monthly meaning
   assert.deepEqual(payload.imageAlts[0], { de: "a", en: "b" });
 });
 
-test("the documented occasion example validates with explicit non-linear prices", () => {
+test("the documented occasion example validates with a daily rate", () => {
   const result = validateProductPackage(example("package-occasion.json"));
   assert.equal(result.ok, true, result.errors.join("; "));
-  assert.deepEqual(result.package.pricing.occasion.map((o) => [o.days, o.price]).slice(0, 3), [[1, 50], [2, 80], [3, 105]]);
+  assert.equal(result.package.pricing.daily, 50);
+  assert.equal(occasionTotal(50, 3), 150);
   const payload = buildPackageProductPayload(result.package, { categoryId: null, brandId: null, brandName: "", images: [], slug: "h" });
   assert.equal(payload.rentalPeriodUnit, "day");
   assert.equal(payload.maximumRentalDays, 7);
   assert.equal(payload.buyerPrice, 0);
+  assert.equal(payload.occasionDailyRate, 50);
+  assert.deepEqual(payload.occasionPricing, []);
+});
+
+test("a package that still lists per-length occasion prices is converted to a daily rate with a warning", () => {
+  const legacy = example("package-occasion.json");
+  legacy.pricing = { occasion: [{ days: 1, price: 50 }, { days: 2, price: 80 }] };
+  const result = validateProductPackage(legacy);
+  assert.equal(result.ok, true, result.errors.join("; "));
+  assert.equal(result.package.pricing.daily, 50);
+  assert.ok(result.warnings.some((w) => w.includes("daily rate")));
 });
 
 test("invalid packages are rejected with useful messages instead of becoming products", () => {
-  const bad = validateProductPackage({ schema: "wrong", rentalMode: "occasion", titles: {}, pricing: { occasion: [{ days: 9, price: 10 }, { days: 2, price: 0 }] } });
+  const bad = validateProductPackage({ schema: "wrong", rentalMode: "occasion", titles: {}, pricing: { daily: 0 } });
   assert.equal(bad.ok, false);
   assert.ok(bad.errors.some((e) => e.includes("schema")));
   assert.ok(bad.errors.some((e) => e.includes("title")));
-  assert.ok(bad.errors.some((e) => e.includes("1 to 7")));
+  assert.ok(bad.errors.some((e) => e.includes("daily rental price")));
   assert.equal(validateProductPackage({ schema: "leihfluss.product-package/1", titles: { de: "X" }, pricing: { weekly: 10 } }).ok, false, "standard needs a monthly price");
   assert.equal(validateProductPackage("nope").ok, false);
 });
 
-test("occasion options reject duplicates, flag a cheaper longer rental, and look up exact days only", () => {
-  const dup = normalizeOccasionOptions([{ days: 1, price: 50 }, { days: 1, price: 60 }]);
-  assert.ok(dup.errors.length > 0);
-  const odd = normalizeOccasionOptions([{ days: 1, price: 50 }, { days: 2, price: 40 }]);
-  assert.equal(odd.errors.length, 0);
-  assert.equal(odd.warnings.length, 1);
-  const product = { occasionPricing: [{ days: 1, price: 50 }, { days: 3, price: 105 }] };
-  assert.equal(occasionPriceForDays(product, 3), 105);
-  assert.equal(occasionPriceForDays(product, 2), null);
+test("a daily rate must be a positive amount and legacy lists convert predictably", () => {
+  for (const bad of [0, -5, "abc", undefined, null, ""]) assert.ok(normalizeDailyRate(bad).errors.length > 0, String(bad));
+  assert.equal(normalizeDailyRate("49.999").rate, 50);
+  assert.equal(dailyRateFromLegacyOptions([{ days: 1, price: 50 }, { days: 3, price: 105 }]).rate, 50);
+  assert.equal(dailyRateFromLegacyOptions([{ days: 2, price: 80 }]).rate, 40);
+  assert.ok(dailyRateFromLegacyOptions([]).errors.length > 0);
+  assert.equal(occasionTotal(50, 7), 350);
 });
 
 test("licensed images without a license and images without alt text produce warnings, not failures", () => {

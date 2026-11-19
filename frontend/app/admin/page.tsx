@@ -1,5 +1,6 @@
 "use client";
 
+import { collectedAmount, isPayingOrder } from "@/lib/order-money";
 import { useEffect, useMemo, useState } from "react";
 import { fetchAdminOrders, fetchAdminProducts, fetchAdminSupportRequests } from "@/lib/api";
 import { Order, Product, SupportRequest } from "@/lib/types";
@@ -76,12 +77,12 @@ function buildRecentWeekRevenue(orders: Order[], totalWeeks: number) {
 
     const weekOrders = orders.filter((order) => {
       const createdAt = new Date(order.createdAt);
-      return createdAt >= start && createdAt <= end && order.paymentStatus === "paid";
+      return createdAt >= start && createdAt <= end && isPayingOrder(order);
     });
 
     return {
       label: `${dayLabel(start)} - ${dayLabel(end)}`,
-      value: weekOrders.reduce((sum, order) => sum + order.total, 0),
+      value: weekOrders.reduce((sum, order) => sum + collectedAmount(order), 0),
     };
   });
 
@@ -136,8 +137,9 @@ export default function AdminDashboardPage() {
   }, []);
 
   const metrics = useMemo(() => {
-    const paidOrders = orders.filter((order) => order.paymentStatus === "paid");
-    const totalRevenue = paidOrders.reduce((sum, order) => sum + order.total, 0);
+    const paidOrders = orders.filter((order) => isPayingOrder(order));
+    // Revenue is what has been collected; an instalment rental has not paid its full total yet.
+    const totalRevenue = paidOrders.reduce((sum, order) => sum + collectedAmount(order), 0);
     const openRequests = supportRequests.filter((request) => request.status !== "resolved").length;
     const resolvedRequests = supportRequests.filter((request) => request.status === "resolved").length;
     const activeListings = products.filter((product) => product.isActive).length;

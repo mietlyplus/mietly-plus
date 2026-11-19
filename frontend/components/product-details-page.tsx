@@ -8,6 +8,7 @@ import { HomeFooter } from "@/components/home-footer";
 import { RentalProductCard } from "@/components/rental-product-card";
 import { fetchPublicProductBySlug, fetchPublicProducts } from "@/lib/api";
 import { addCartItem } from "@/lib/cart";
+import { euro, paymentCopy, thenLine } from "@/lib/payment-copy";
 import { earliestStartDate } from "@/lib/delivery-date";
 import { useSiteLocale } from "@/lib/use-site-locale";
 import { useWishlist } from "@/lib/use-wishlist";
@@ -83,7 +84,7 @@ const pdpCopy = {
     selected: "selected",
     day: "day", days: "days",
     includedTitle: "What's included",
-    occasionNote: "Occasion rental for 1 to 7 days. Each duration has its own fixed price.",
+    occasionNote: "Occasion rental for 1 to 7 days at a daily price, paid once at checkout.",
     leadTime: (days: number, date: string) => `Delivery lead time: ${days} day${days === 1 ? "" : "s"}. Earliest start date: ${date}.`,
     dateTooEarly: (date: string) => `Please choose a start date on or after ${date}.`,
   },
@@ -104,7 +105,7 @@ const pdpCopy = {
     selected: "gewählt",
     day: "Tag", days: "Tage",
     includedTitle: "Das ist enthalten",
-    occasionNote: "Anlass-Miete für 1 bis 7 Tage. Jede Dauer hat ihren festen Preis.",
+    occasionNote: "Anlass-Miete für 1 bis 7 Tage zum Tagespreis, einmalig beim Checkout bezahlt.",
     leadTime: (days: number, date: string) => `Liefervorlauf: ${days} ${days === 1 ? "Tag" : "Tage"}. Frühester Mietstart: ${date}.`,
     dateTooEarly: (date: string) => `Bitte wähle ein Startdatum ab dem ${date}.`,
   },
@@ -208,8 +209,7 @@ export default function ProductDetailsPage() {
   const showWeekly = isWeeklyAvailable || (!isWeeklyAvailable && !isMonthlyAvailable);
   const showMonthly = isMonthlyAvailable || (!isWeeklyAvailable && !isMonthlyAvailable);
   const multipliedOfferPrice = effectiveUnitPrice * activeDuration;
-  const multipliedBuyerPrice = buyerPrice * activeDuration;
-  // Occasion products rent by the day from explicit stored prices (never multiplied).
+  // Occasion products rent by the day: the server derives each total as daily rate x days.
   const occasionOptions = product?.rentalMode === "occasion" ? [...(product.occasionPricing || [])].sort((a, b) => a.days - b.days) : [];
   const isOccasion = occasionOptions.length > 0;
   const selectedOccasion = occasionOptions.find((option) => option.days === occasionDays) || occasionOptions[0];
@@ -220,6 +220,10 @@ export default function ProductDetailsPage() {
   const visibleSpecs = showAllSpecs ? product?.specifications || [] : (product?.specifications || []).slice(0, 3);
   const productNotes = productNotesCopy[locale];
   const deliveryFee = Number(product?.deliveryFee || 0);
+  const payCopy = paymentCopy(locale);
+  // Longer than one period: the rental price recurs, delivery and deposit are charged once.
+  const isRecurringSelection = !isOccasion && activeDuration > 1;
+  const oneTimeFees = (product?.depositEnabled ? Number(product.securityDeposit || 0) : 0) + deliveryFee;
   // Reflects this product's own configuration: its lead time and its delivery fee.
   const deliveryLine =
     locale === "de"
@@ -471,20 +475,44 @@ export default function ProductDetailsPage() {
                   </div>
 
                   <div className="mt-5 border-t border-zinc-200 pt-4">
-                    {shownHasOffer ? (
-                      <div className="flex items-end gap-2">
-                        <span className="text-2xl text-zinc-400 line-through">EUR {formatAmount(multipliedBuyerPrice)}</span>
-                        <span className="text-4xl font-extrabold text-rose-600">EUR {formatAmount(multipliedOfferPrice)}</span>
-                        <span className="pb-1 text-sm font-semibold text-zinc-700">/{durationText(activeDuration, rentalMode, locale)}</span>
-                      </div>
+                    {isOccasion ? (
+                      <>
+                        <div className="flex items-end gap-2">
+                          <span className="text-4xl font-extrabold text-[rgb(47,118,135)]">{euro(shownPrice, locale)}</span>
+                          <span className="pb-1 text-sm font-semibold text-zinc-700">/ {shownDuration} {shownDuration === 1 ? pdpCopy[locale].day : pdpCopy[locale].days}</span>
+                        </div>
+                        <p className="mt-2 text-sm font-medium text-zinc-800">
+                          {payCopy.occasionLine(euro(product.occasionDailyRate || 0, locale), shownDuration, euro(shownPrice, locale))}
+                        </p>
+                      </>
                     ) : (
-                      <div className="flex items-end gap-2">
-                        <span className="text-4xl font-extrabold text-[rgb(47,118,135)]">EUR {formatAmount(shownPrice)}</span>
-                        <span className="pb-1 text-sm font-semibold text-zinc-700">/{isOccasion ? `${shownDuration} ${shownDuration === 1 ? pdpCopy[locale].day : pdpCopy[locale].days}` : durationText(shownDuration, shownUnit, locale)}</span>
-                      </div>
+                      <>
+                        {shownHasOffer ? (
+                          <div className="flex items-end gap-2">
+                            <span className="text-2xl text-zinc-400 line-through">{euro(buyerPrice, locale)}</span>
+                            <span className="text-4xl font-extrabold text-rose-600">{euro(effectiveUnitPrice, locale)}</span>
+                            <span className="pb-1 text-sm font-semibold text-zinc-700">/ {rentalMode === "month" ? payCopy.perMonth : payCopy.perWeek}</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-end gap-2">
+                            <span className="text-4xl font-extrabold text-[rgb(47,118,135)]">{euro(effectiveUnitPrice, locale)}</span>
+                            <span className="pb-1 text-sm font-semibold text-zinc-700">/ {rentalMode === "month" ? payCopy.perMonth : payCopy.perWeek}</span>
+                          </div>
+                        )}
+                        <div className="mt-3 space-y-1 text-sm text-zinc-700">
+                          <p>{payCopy.duration}: <span className="font-semibold text-zinc-900">{durationText(activeDuration, rentalMode, locale)}</span></p>
+                          {isRecurringSelection ? (
+                            <>
+                              <p>{payCopy.dueToday}: <span className="font-semibold text-zinc-900">{euro(effectiveUnitPrice, locale)}{oneTimeFees > 0 ? ` + ${payCopy.oneTimeShort}` : ""}</span></p>
+                              <p>{thenLine(effectiveUnitPrice, rentalMode, activeDuration - 1, locale)}</p>
+                            </>
+                          ) : null}
+                          <p>{payCopy.totalRental}: <span className="font-semibold text-zinc-900">{euro(multipliedOfferPrice, locale)}</span></p>
+                        </div>
+                      </>
                     )}
                     {product.depositEnabled ? (
-                      <p className="mt-2 text-sm text-zinc-600">{pdpCopy[locale].deposit}: EUR {formatAmount(product.securityDeposit || 0)}</p>
+                      <p className="mt-2 text-sm text-zinc-600">{pdpCopy[locale].deposit}: EUR {formatAmount(product.securityDeposit || 0)} ({payCopy.oneTimeLabel})</p>
                     ) : null}
                     <p className="mt-2 text-sm text-zinc-600">
                       {pdpCopy[locale].idVerification}:{" "}
