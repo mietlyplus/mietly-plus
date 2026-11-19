@@ -1,0 +1,101 @@
+backend/lib/pricing.test.js
+  s_755b8269fb6f42::t_d8cae13f649925 327,333-343,349,352,356,358,361-363,369-376,379,391
+  s_755b8269fb6f42::t_4185f8dff5973f 8
+backend/lib/publication-rules.js
+  s_755b8269fb6f42::t_cb89af6b3e7e1d 32-33
+frontend/app/admin/page.tsx
+  s_755b8269fb6f42::t_376815d258be31 3,80,85,140-142
+backend/recurring-webhook.test.js
+  s_755b8269fb6f42::t_131919e6fdc98c 1-301,321-333
+  s_755b8269fb6f42::t_35b230bb2de56c 302-320
+frontend/components/rental-product-card.tsx
+  s_755b8269fb6f42::t_942f2509c8d6f5 81-86
+backend/index.js
+  s_755b8269fb6f42::t_c0bcb8c45ee871 4603-4607,4614-4643,4655-4656,4671-4672,4679
+  s_755b8269fb6f42::t_e149cf754eaea5 27
+  s_755b8269fb6f42::t_5e7ac122474d05 28-40,843,4981-4986,5001-5016,5018,5093-5173,5289,5296-5298,5308-5310,5382-5384,5390-5392,5601-5602
+  s_755b8269fb6f42::t_1c639ee75b4843 1035-1037,2285,2287,2289-2292,2294-2295,2305-2306,2354,2378-2380,2384,2475-2478,2521-2523,3050,4442
+  s_755b8269fb6f42::t_48ae14bfde8d8b 4762-4774,4806-4815,4824,4831-4870,4872-4873,4905,4915-4926,4943-4947,4949,4952-4954,4973-4974
+  s_755b8269fb6f42::t_f743f36c69c21b 5443
+  s_755b8269fb6f42::t_078ab852777cfb 1167,1178-1195,5396
+  s_755b8269fb6f42::t_89504fc95fc37d 5599
+backend/models/Order.js
+  s_755b8269fb6f42::t_e149cf754eaea5 99-137,214-215,218-237
+frontend/components/payment-breakdown.tsx
+  s_755b8269fb6f42::t_ff3fec816b2b7e 1-54
+backend/lib/recurring-billing.js
+  s_755b8269fb6f42::t_ccdeebd1dc3b69 1-69,74-185
+  s_755b8269fb6f42::t_5e7ac122474d05 70-73
+backend/lib/pricing.js
+  s_755b8269fb6f42::t_ff3fec816b2b7e 346-348
+  s_755b8269fb6f42::t_dabb4721251406 13,15-25,28-40,265-268,272-274,297-298,329,338-341,366-368,373,375-376,381,383-384
+frontend/app/admin/products/draft/[id]/page.tsx
+  s_755b8269fb6f42::t_7f2149cfd7bf28 241,243,469
+frontend/components/admin/rental-terms-card.tsx
+  s_755b8269fb6f42::t_7f2149cfd7bf28 8-10,18,22,28-29,36-37,63-74,78
+frontend/app/admin/orders/page.tsx
+  s_755b8269fb6f42::t_376815d258be31 209-222
+backend/checkout-recurring.test.js
+  s_755b8269fb6f42::t_89504fc95fc37d 1-202
+backend/models/Product.js
+  s_755b8269fb6f42::t_cb89af6b3e7e1d 246,248-250
+frontend/lib/rental-copy.ts
+  s_755b8269fb6f42::t_c768af32016c6e 30,43
+docs/ai-product-package.md
+  s_755b8269fb6f42::t_fa256906b1a09a 17,25,35-36,55,59
+docs/payments.md
+  s_755b8269fb6f42::t_7d3b297e459b45 1-43
+backend/integration/product-package.test.js
+  s_755b8269fb6f42::t_4185f8dff5973f 90,124,142,146,148-153,155,158
+  s_755b8269fb6f42::t_1594d6ee6cde03 91
+docs/examples/package-occasion.json
+  s_755b8269fb6f42::t_d8cae13f649925 16
+frontend/lib/api.ts
+  s_755b8269fb6f42::t_e2af2a84001d0f 1263-1264
+  s_755b8269fb6f42::t_7f2149cfd7bf28 1627,1629
+frontend/lib/order-money.ts
+  s_755b8269fb6f42::t_376815d258be31 1-15
+backend/lib/product-package.test.js
+  s_755b8269fb6f42::t_4185f8dff5973f 6,23,26-27,32-42,46,50,55-61
+backend/lib/billing.js
+  s_755b8269fb6f42::t_dabb4721251406 1-95
+frontend/components/product-details-page.tsx
+  s_755b8269fb6f42::t_7aaf193fcc41a4 11,212,223-226,478-487,489-512,515
+  s_755b8269fb6f42::t_7f2149cfd7bf28 87,108
+backend/lib/product-package.js
+  s_755b8269fb6f42::t_cb89af6b3e7e1d 20,28,132,134-137,140,150,227,291-292
+frontend/lib/payment-copy.ts
+  s_755b8269fb6f42::t_7aaf193fcc41a4 25-26,43-44
+  s_755b8269fb6f42::t_c768af32016c6e 1-24,27-42,45-62,65,74-80,83,85,87,89
+  s_755b8269fb6f42::t_ff3fec816b2b7e 63-64,66-73,81-82,84,86,88
+backend/checkout-quote.test.js
+  s_755b8269fb6f42::t_4185f8dff5973f 106,140-145,151-155,260,285,288-290,295
+frontend/app/checkout/page.tsx
+  s_755b8269fb6f42::t_e2af2a84001d0f 5-6,284-288,427,696,722-727,745,786-794,804-805
+frontend/lib/types.ts
+  s_755b8269fb6f42::t_c768af32016c6e 112-114,231,248-264,429-435,449-462,471,473-474,476
+backend/lib/occasion-pricing.js
+  s_755b8269fb6f42::t_cb89af6b3e7e1d 3-5,10-11,13-16,18-20,22-38,41-43,46
+frontend/app/cart/page.tsx
+  s_755b8269fb6f42::t_535105990dbb43 21-22,138-142,226-228,257-268,270,272,285-286
+frontend/app/checkout/success/page.tsx
+  s_755b8269fb6f42::t_33e30db1de6bdd 5,11-33,40-42,51-54,68-88,96,103,114,120
+frontend/components/home-benefits-strip.tsx
+  s_755b8269fb6f42::t_f743f36c69c21b 6-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a9b47cc613374b13147bf8309f39823466c5ac3b",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
