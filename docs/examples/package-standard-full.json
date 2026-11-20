@@ -1,0 +1,27 @@
+{
+  "schema": "leihfluss.product-package/1",
+  "externalId": "medion-md-15501-full",
+  "rentalMode": "standard",
+  "identity": {
+    "brand": "Medion", "model": "MD 15501", "series": "", "sku": "MD15501",
+    "identifiers": { "ean": "4061275025026", "gtin": "", "mpn": "" },
+    "category": { "path": ["Haushalt", "Küche"] }
+  },
+  "titles": { "de": "Medion MD 15501 4in1 Mikrowelle (25 L)", "en": "Medion MD 15501 4-in-1 Microwave (25 L)" },
+  "descriptions": { "shortDe": "Mikrowelle mit Heißluft und Grill.", "shortEn": "Microwave with hot air and grill.", "longDe": "Langtext.", "longEn": "Long text." },
+  "includedItems": [{ "de": "Grillrost", "en": "Grill rack", "quantity": 1 }],
+  "specifications": [{ "key": "Garraum", "value": "ca. 25 L", "keyEn": "Cavity", "valueEn": "approx. 25 L" }],
+  "tags": ["mikrowelle"],
+  "pricing": { "weekly": 15, "monthly": 40, "weeklyOffer": 12, "monthlyOffer": 35 },
+  "inventory": { "stock": 2, "stockStatus": "in_stock", "lowStockWarning": 1, "maxRentalQuantity": 2, "unit": "piece", "weightKg": 18.3 },
+  "rental": { "minWeeks": 1, "maxWeeks": 4, "minMonths": 1, "maxMonths": 12 },
+  "delivery": { "leadDays": 3, "fee": 4.9 },
+  "risk": { "verificationRequired": false, "depositEnabled": true, "securityDeposit": 100, "replacementValue": 250, "refundable": true },
+  "display": { "isMostPopular": false },
+  "seo": { "metaTitle": "Medion Mikrowelle mieten | Leihfluss", "metaDescription": "Mikrowelle wochen- oder monatsweise mieten.", "keywords": ["mikrowelle mieten"], "canonicalUrl": "", "ogTitle": "", "ogDescription": "" },
+  "images": [
+    { "file": "medion-front.webp", "origin": "owner_photo", "primary": true, "order": 1, "altDe": "Vorderansicht", "altEn": "Front view" },
+    { "file": "medion-back.webp", "origin": "owner_photo", "order": 2, "altDe": "Rückseite", "altEn": "Back view" }
+  ],
+  "sources": [{ "type": "url", "url": "https://www.medion.com/de/", "label": "Manufacturer" }]
+}

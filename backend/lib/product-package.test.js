@@ -117,3 +117,65 @@ test("the storefront date helper gives the same answers as the backend rule", as
     }
   }
 });
+
+test("a complete standard package keeps stock, verification, deposit, delivery, offers and display settings; always private", () => {
+  const pkg = example("package-standard.json");
+  pkg.inventory = { stock: 2, stockStatus: "low_stock", lowStockWarning: 1, maxRentalQuantity: 2, unit: "set", weightKg: 18.3 };
+  pkg.rental = { minWeeks: 2, maxWeeks: 6, minMonths: 2, maxMonths: 12 };
+  pkg.delivery = { leadDays: 5, fee: 9.9 };
+  pkg.risk = { verificationRequired: false, depositEnabled: true, securityDeposit: 100, replacementValue: 250, refundable: false };
+  pkg.pricing = { weekly: 15, monthly: 40, weeklyOffer: 12, monthlyOffer: 35 };
+  pkg.display = { isMostPopular: true };
+  const result = validateProductPackage(pkg);
+  assert.equal(result.ok, true, result.errors.join("; "));
+  const p = buildPackageProductPayload(result.package, { categoryId: "c", brandId: "b", brandName: "Medion", images: [], slug: "s" });
+  assert.equal(p.isActive, false);
+  assert.deepEqual([p.stock, p.stockStatus, p.lowStockWarning, p.maxRentalQuantity, p.unit, p.weightKg], [2, "low_stock", 1, 2, "set", 18.3]);
+  assert.deepEqual([p.minimumRentalWeeks, p.maximumRentalWeeks, p.minimumRentalMonths, p.maximumRentalMonths], [2, 6, 2, 12]);
+  assert.deepEqual([p.deliveryLeadDays, p.deliveryFee], [5, 9.9]);
+  assert.deepEqual([p.verificationRequired, p.depositEnabled, p.securityDeposit, p.replacementValue, p.refundable], [false, true, 100, 250, false]);
+  assert.deepEqual([p.buyerPrice, p.offerPrice, p.monthlyBuyerPrice, p.monthlyOfferPrice], [15, 12, 40, 35]);
+  assert.equal(p.isMostPopular, true);
+});
+
+test("a basic package without the new sections keeps the old defaults and stays private", () => {
+  const result = validateProductPackage(example("package-standard.json"));
+  const p = buildPackageProductPayload(result.package, { categoryId: null, brandId: null, brandName: "", images: [], slug: "s" });
+  assert.equal(p.isActive, false);
+  assert.deepEqual([p.stock, p.verificationRequired, p.depositEnabled, p.deliveryFee, p.maxRentalQuantity], [0, true, false, 0, 1]);
+  assert.equal("deliveryLeadDays" in p, false, "the product default lead time applies");
+});
+
+test("an occasion package still works with the new sections, and bad optional values are ignored with a warning", () => {
+  const pkg = example("package-occasion.json");
+  pkg.inventory = { stock: 3, stockStatus: "nonsense" };
+  pkg.risk = { depositEnabled: "maybe" };
+  const result = validateProductPackage(pkg);
+  assert.equal(result.ok, true, result.errors.join("; "));
+  assert.ok(result.warnings.some((w) => w.includes("stockStatus")));
+  assert.ok(result.warnings.some((w) => w.includes("depositEnabled")));
+  const p = buildPackageProductPayload(result.package, { categoryId: null, brandId: null, brandName: "", images: [], slug: "s" });
+  assert.equal(p.stock, 3);
+  assert.equal(p.stockStatus, "in_stock");
+  assert.equal(p.depositEnabled, false);
+  assert.equal(p.occasionDailyRate, 50);
+});
+
+test("category matching is exact and hierarchy-aware; ambiguous or partial names stay unresolved", () => {
+  const { matchCategoryExact, matchBrandExact } = require("./product-payload");
+  const cats = [
+    { id: "1", nameEn: "Home", nameDe: "Haushalt", slug: "home", parentId: null },
+    { id: "2", nameEn: "Kitchen", nameDe: "Küche", slug: "kitchen", parentId: "1" },
+    { id: "3", nameEn: "Party", nameDe: "Feiern", slug: "party", parentId: null },
+    { id: "4", nameEn: "Kitchen", nameDe: "Küche", slug: "party-kitchen", parentId: "3" },
+  ];
+  assert.equal(matchCategoryExact(["Haushalt", "Küche"], cats).categoryId, "2");
+  assert.equal(matchCategoryExact("Feiern > Küche", cats).categoryId, "4");
+  assert.equal(matchCategoryExact("Küche", cats).resolved, false, "same name under two parents is ambiguous");
+  assert.equal(matchCategoryExact("Feiern", cats).categoryId, "3");
+  assert.equal(matchCategoryExact("Kitch", cats).resolved, false, "no partial matching");
+  assert.equal(matchCategoryExact(["Feiern", "Haushalt"], cats).resolved, false);
+  const brands = [{ id: "b", name: "Medion", slug: "medion" }];
+  assert.equal(matchBrandExact("medion", brands).brandId, "b");
+  assert.equal(matchBrandExact("Medi", brands).resolved, false);
+});

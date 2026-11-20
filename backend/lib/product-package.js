@@ -14,12 +14,17 @@
 //   descriptions    { shortDe, shortEn, longDe, longEn }
 //   includedItems   [{ de, en, quantity }]            bundles / party packages
 //   specifications  [{ key, value, keyEn?, valueEn? }] any number; keyEn/valueEn = English wording
-//   delivery        { leadDays }                      optional, 0-30 (default 2)
+//   delivery        { leadDays, fee }                 optional; leadDays 0-30 (default 2), fee >= 0
+//   inventory       { stock, stockStatus, lowStockWarning, maxRentalQuantity, unit, weightKg }  all optional
+//   rental          { minWeeks, maxWeeks, minMonths, maxMonths }                                  all optional
+//   risk            { verificationRequired, depositEnabled, securityDeposit, replacementValue, refundable }  all optional
+//   display         { isMostPopular }
+//   (identity.category may be a name, "Parent > Child", { name } or { path: ["Parent","Child"] })
 //   tags            [string]
-//   pricing         { weekly, monthly }               standard only
+//   pricing         { weekly, monthly, weeklyOffer?, monthlyOffer? }  standard only
 //                   { daily }                          occasion only (daily rate, 1-7 days; legacy { occasion:[{days,price}] } is converted)
 //   seo             { metaTitle, metaDescription, keywords[], canonicalUrl, ogTitle, ogDescription }
-//   images          [{ url | file, origin, role, altDe, altEn, license?, note?, primary? }]
+//   images          [{ url | file, origin, role, order?, altDe, altEn, license?, note?, primary? }]
 //   sources         [{ type, url?, label?, note? }]   provenance
 //   warnings        [{ message }]                      uncertain information, shown to the owner
 //
@@ -32,6 +37,7 @@ const SCHEMA_ID = "leihfluss.product-package/1";
 const RENTAL_MODES = ["standard", "occasion"];
 const IMAGE_ORIGINS = ["owner_photo", "ai_generated", "licensed_asset", "reference_only"];
 const SOURCE_TYPES = ["url", "pdf", "photo", "instruction", "other"];
+const STOCK_STATUSES = ["in_stock", "low_stock", "out_of_stock", "preorder"];
 const MAX_IMAGES = 12;
 const MAX_SPECS = 80;
 
@@ -41,6 +47,28 @@ function text(value, max = 4000) {
 
 function list(value) {
   return Array.isArray(value) ? value : [];
+}
+
+// Reads an optional number from an object. Returns undefined when absent so the
+// product default applies; pushes a warning and returns undefined when invalid.
+function optionalNumber(source, key, label, warnings, { min = 0, max = Infinity, integer = false } = {}) {
+  const raw = source?.[key];
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+    warnings.push(`${label} was ignored: it must be ${integer ? "a whole number" : "a number"} from ${min}${max === Infinity ? " upwards" : ` to ${max}`}.`);
+    return undefined;
+  }
+  return value;
+}
+
+function optionalBoolean(source, key, label, warnings) {
+  const raw = source?.[key];
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  if (typeof raw === "boolean") return raw;
+  if (raw === "true" || raw === "false") return raw === "true";
+  warnings.push(`${label} was ignored: it must be true or false.`);
+  return undefined;
 }
 
 function isHttpsUrl(value) {
@@ -89,7 +117,8 @@ function validateProductPackage(input) {
   // --- identity ---
   const brandName = text(identity.brand, 120);
   if (!brandName) warnings.push("No brand given. You will choose one when reviewing the draft.");
-  const categoryName = text(identity.category?.name ?? identity.category, 120);
+  const categoryPath = Array.isArray(identity.category?.path) ? identity.category.path.map((part) => text(part, 120)).filter(Boolean) : [];
+  const categoryName = categoryPath.length ? categoryPath.join(" > ") : text(identity.category?.name ?? identity.category, 240);
   if (!categoryName) warnings.push("No category given. You will choose one when reviewing the draft.");
   const identifiers = {
     ean: text(identity.identifiers?.ean, 32),
@@ -126,10 +155,61 @@ function validateProductPackage(input) {
     else warnings.push("delivery.leadDays must be a whole number from 0 to 30 and was ignored.");
   }
 
+  const deliveryFee = optionalNumber(input.delivery, "fee", "delivery.fee", warnings);
+
+  // --- inventory ---
+  const inv = input.inventory && typeof input.inventory === "object" ? input.inventory : {};
+  const inventory = {
+    stock: optionalNumber(inv, "stock", "inventory.stock", warnings, { integer: true }),
+    stockStatus: undefined,
+    lowStockWarning: optionalNumber(inv, "lowStockWarning", "inventory.lowStockWarning", warnings, { integer: true }),
+    maxRentalQuantity: optionalNumber(inv, "maxRentalQuantity", "inventory.maxRentalQuantity", warnings, { min: 1, integer: true }),
+    unit: text(inv.unit, 40) || undefined,
+    weightKg: optionalNumber(inv, "weightKg", "inventory.weightKg", warnings),
+  };
+  if (inv.stockStatus !== undefined && inv.stockStatus !== "") {
+    if (STOCK_STATUSES.includes(inv.stockStatus)) inventory.stockStatus = inv.stockStatus;
+    else warnings.push(`inventory.stockStatus was ignored: use one of ${STOCK_STATUSES.join(", ")}.`);
+  }
+  if (inventory.stock === 0 && !inventory.stockStatus) warnings.push("Stock is 0. Set the stock before publishing.");
+
+  // --- rental limits ---
+  const rent = input.rental && typeof input.rental === "object" ? input.rental : {};
+  const rental = {
+    minimumRentalWeeks: optionalNumber(rent, "minWeeks", "rental.minWeeks", warnings, { min: 1, integer: true }),
+    maximumRentalWeeks: optionalNumber(rent, "maxWeeks", "rental.maxWeeks", warnings, { min: 1, integer: true }),
+    minimumRentalMonths: optionalNumber(rent, "minMonths", "rental.minMonths", warnings, { min: 1, integer: true }),
+    maximumRentalMonths: optionalNumber(rent, "maxMonths", "rental.maxMonths", warnings, { min: 1, integer: true }),
+  };
+  if (rental.minimumRentalWeeks && rental.maximumRentalWeeks && rental.minimumRentalWeeks > rental.maximumRentalWeeks) {
+    warnings.push("rental.minWeeks is above rental.maxWeeks; both were ignored.");
+    rental.minimumRentalWeeks = rental.maximumRentalWeeks = undefined;
+  }
+  if (rental.minimumRentalMonths && rental.maximumRentalMonths && rental.minimumRentalMonths > rental.maximumRentalMonths) {
+    warnings.push("rental.minMonths is above rental.maxMonths; both were ignored.");
+    rental.minimumRentalMonths = rental.maximumRentalMonths = undefined;
+  }
+
+  // --- risk: verification and deposit are decided per product ---
+  const riskIn = input.risk && typeof input.risk === "object" ? input.risk : {};
+  const risk = {
+    verificationRequired: optionalBoolean(riskIn, "verificationRequired", "risk.verificationRequired", warnings),
+    depositEnabled: optionalBoolean(riskIn, "depositEnabled", "risk.depositEnabled", warnings),
+    securityDeposit: optionalNumber(riskIn, "securityDeposit", "risk.securityDeposit", warnings),
+    replacementValue: optionalNumber(riskIn, "replacementValue", "risk.replacementValue", warnings),
+    refundable: optionalBoolean(riskIn, "refundable", "risk.refundable", warnings),
+  };
+  if (risk.depositEnabled === true && !(risk.securityDeposit > 0)) warnings.push("The deposit is enabled but no securityDeposit amount was given.");
+  if (risk.depositEnabled !== true && risk.securityDeposit > 0) warnings.push("A securityDeposit amount was given but depositEnabled is not true; no deposit will be charged.");
+
+  const isMostPopular = optionalBoolean(input.display, "isMostPopular", "display.isMostPopular", warnings);
+
   // --- pricing ---
   let weekly = 0;
   let monthly = 0;
   let dailyRate = 0;
+  let weeklyOffer = 0;
+  let monthlyOffer = 0;
   if (rentalMode === "occasion") {
     const result =
       pricing.daily === undefined && Array.isArray(pricing.occasion)
@@ -148,6 +228,10 @@ function validateProductPackage(input) {
       warnings.push("The monthly price is much higher than four weekly prices. Check both prices.");
     }
     if (pricing.daily !== undefined || pricing.occasion) warnings.push("The daily price is ignored for a standard product.");
+    weeklyOffer = toMoney(pricing.weeklyOffer);
+    monthlyOffer = toMoney(pricing.monthlyOffer);
+    if (weeklyOffer > 0 && !(weeklyOffer < weekly)) { warnings.push("pricing.weeklyOffer must be below the weekly price and was ignored."); weeklyOffer = 0; }
+    if (monthlyOffer > 0 && !(monthlyOffer < monthly)) { warnings.push("pricing.monthlyOffer must be below the monthly price and was ignored."); monthlyOffer = 0; }
   }
 
   // --- images ---
@@ -187,6 +271,8 @@ function validateProductPackage(input) {
       license: text(image?.license, 300),
       note: text(image?.note, 300),
       primary: Boolean(image?.primary),
+      order: Number.isFinite(Number(image?.order)) ? Number(image.order) : null,
+      index,
     });
   });
   if (images.length === 0) warnings.push("No usable images. Add photos before publishing; at least one real image is required.");
@@ -216,15 +302,19 @@ function validateProductPackage(input) {
       series: text(identity.series, 120),
       sku: text(identity.sku, 80),
       identifiers,
-      category: { name: categoryName },
+      category: { name: categoryName, path: categoryPath.length ? categoryPath : categoryName.split(/\s*>\s*/).filter(Boolean) },
     },
     titles: { de: titleDe, en: titleEn },
     descriptions: { shortDe, shortEn, longDe, longEn },
     includedItems,
     specifications,
     tags: list(input.tags).map((tag) => text(tag, 60)).filter(Boolean).slice(0, 30),
-    delivery: { leadDays },
-    pricing: rentalMode === "occasion" ? { daily: dailyRate } : { weekly, monthly },
+    delivery: { leadDays, fee: deliveryFee },
+    inventory,
+    rental,
+    risk,
+    display: { isMostPopular },
+    pricing: rentalMode === "occasion" ? { daily: dailyRate } : { weekly, monthly, weeklyOffer, monthlyOffer },
     seo: {
       metaTitle: text(seoIn.metaTitle, 120),
       metaDescription: text(seoIn.metaDescription, 320),
@@ -251,6 +341,10 @@ function validateProductPackage(input) {
  * Builds the Product document payload for a validated package. Always inactive.
  * `images` are already hosted: [{ url, altDe, altEn }] in display order.
  */
+function definedOnly(object) {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined && value !== null));
+}
+
 function buildPackageProductPayload(pkg, { categoryId, brandId, brandName, images, slug }) {
   const occasion = pkg.rentalMode === "occasion";
   const gallery = images.map((image) => image.url).filter(Boolean);
@@ -292,12 +386,13 @@ function buildPackageProductPayload(pkg, { categoryId, brandId, brandName, image
     occasionPricing: [],
     // Standard pricing keeps its existing meaning: weekly -> buyerPrice, monthly -> monthly fields.
     buyerPrice: occasion ? 0 : pkg.pricing.weekly,
-    offerPrice: 0,
+    offerPrice: occasion ? 0 : pkg.pricing.weeklyOffer || 0,
     monthlyBuyerPrice: occasion ? 0 : pkg.pricing.monthly,
-    monthlyOfferPrice: 0,
+    monthlyOfferPrice: occasion ? 0 : pkg.pricing.monthlyOffer || 0,
     monthlyPrice: occasion ? 0 : pkg.pricing.monthly,
     weeklyAutoDiscount: 0,
     monthlyAutoDiscount: 0,
+    // Defaults apply only where the package is silent (see definedOnly below).
     stock: 0,
     stockStatus: "in_stock",
     lowStockWarning: 5,
@@ -308,17 +403,36 @@ function buildPackageProductPayload(pkg, { categoryId, brandId, brandName, image
     maximumRentalWeeks: 4,
     minimumRentalMonths: 1,
     maximumRentalMonths: 24,
-    minimumRentalDays: occasion ? 1 : 7,
-    maximumRentalDays: occasion ? MAX_OCCASION_DAYS : 30,
-    rentalPeriodUnit: occasion ? "day" : "week",
     deliveryFee: 0,
-    ...(pkg.delivery?.leadDays !== null && pkg.delivery?.leadDays !== undefined ? { deliveryLeadDays: pkg.delivery.leadDays } : {}),
     verificationRequired: true,
     depositEnabled: false,
     securityDeposit: 0,
     replacementValue: 0,
     refundable: true,
     isMostPopular: false,
+    ...definedOnly({
+      stock: pkg.inventory?.stock,
+      stockStatus: pkg.inventory?.stockStatus,
+      lowStockWarning: pkg.inventory?.lowStockWarning,
+      maxRentalQuantity: pkg.inventory?.maxRentalQuantity,
+      unit: pkg.inventory?.unit,
+      weightKg: pkg.inventory?.weightKg,
+      minimumRentalWeeks: pkg.rental?.minimumRentalWeeks,
+      maximumRentalWeeks: pkg.rental?.maximumRentalWeeks,
+      minimumRentalMonths: pkg.rental?.minimumRentalMonths,
+      maximumRentalMonths: pkg.rental?.maximumRentalMonths,
+      deliveryFee: pkg.delivery?.fee,
+      deliveryLeadDays: pkg.delivery?.leadDays ?? undefined,
+      verificationRequired: pkg.risk?.verificationRequired,
+      depositEnabled: pkg.risk?.depositEnabled,
+      securityDeposit: pkg.risk?.securityDeposit,
+      replacementValue: pkg.risk?.replacementValue,
+      refundable: pkg.risk?.refundable,
+      isMostPopular: pkg.display?.isMostPopular,
+    }),
+    minimumRentalDays: occasion ? 1 : 7,
+    maximumRentalDays: occasion ? MAX_OCCASION_DAYS : 30,
+    rentalPeriodUnit: occasion ? "day" : "week",
     isActive: false,
   };
 }

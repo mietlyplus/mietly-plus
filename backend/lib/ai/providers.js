@@ -124,6 +124,38 @@ const geminiTextProvider = {
 };
 
 // ---------------------------------------------------------------------------
+// Gemini web search (source fallback). Only suggests WHERE to look: the pages
+// are then fetched and parsed by our own extractor, so nothing the model says
+// becomes a product fact. Grounding with Google Search cannot be combined with
+// JSON response mode, so the reply is parsed loosely.
+// ---------------------------------------------------------------------------
+async function geminiSearchCandidates({ query, brand }) {
+  const prompt =
+    `Find web pages that describe this exact product: "${query}"${brand ? ` (brand: ${brand})` : ""}.\n` +
+    "Prefer the manufacturer's official product page first, then well-known retailers whose pages are publicly readable. " +
+    "Only return pages for this exact model, not similar products. Do not invent URLs.\n" +
+    'Reply with JSON only: {"candidates":[{"url":"https://...","title":"...","type":"manufacturer"|"retailer"}]} (at most 6).';
+  const payload = await geminiFetch(
+    `/models/${GEMINI_TEXT_MODEL}:generateContent`,
+    {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      tools: [{ google_search: {} }],
+      generationConfig: { temperature: 0 },
+    },
+    TEXT_TIMEOUT_MS
+  );
+  const text = (payload?.candidates?.[0]?.content?.parts || []).map((part) => part.text || "").join("");
+  const parsed = parseJsonLoose(text);
+  return Array.isArray(parsed.candidates) ? parsed.candidates : [];
+}
+
+/** Returns the search function to use, or null when no real search is configured. */
+function resolveSearchCandidates() {
+  if ((process.env.AI_TEXT_PROVIDER || "gemini") === "fixture") return null;
+  return geminiApiKey() ? geminiSearchCandidates : null;
+}
+
+// ---------------------------------------------------------------------------
 // Gemini images
 // ---------------------------------------------------------------------------
 function referenceParts(references = []) {
@@ -221,5 +253,6 @@ module.exports = {
   geminiTextProvider,
   parseJsonLoose,
   resolveImageProvider,
+  resolveSearchCandidates,
   resolveTextProvider,
 };

@@ -105,13 +105,8 @@ export default function ProductDraftReviewPage() {
     (image) => image.status === "pending" && image.origin !== "user" && !attemptedImageIdsRef.current.has(image.id)
   );
 
-  // A normal draft should arrive finished, so its pending images start on their own.
-  // A PUBLISHED listing never spends on its own: its missing views are created only
-  // when the owner presses the button below.
-  useEffect(() => {
-    if (!token || !draft || draft.status !== "ready" || pendingImages.length === 0) return;
-    void generatePending(pendingImages);
-  }, [token, draft, pendingImages, generatePending]);
+  // Images are never generated automatically. Pending slots wait for the owner to
+  // press the optional button below, so nothing is spent without a deliberate click.
 
   const run = async (label: string, action: () => Promise<ProductDraft | void>) => {
     setBusy(label);
@@ -337,10 +332,13 @@ export default function ProductDraftReviewPage() {
         </div>
       ) : null}
 
-      {draft.status === "published" && pendingImages.length > 0 ? (
+      {pendingImages.length > 0 ? (
         <div className="rounded-xl border border-sky-300 bg-sky-50 p-4 text-sm text-sky-900">
-          <p className="font-semibold">{pendingImages.length} missing image(s) can now be created from your photo</p>
-          <p className="mt-1">Each costs a few cents. They are added to the unapproved changes; the live listing is unchanged until you apply them.</p>
+          <p className="font-semibold">Optional: create {pendingImages.length} more image(s) with AI</p>
+          <p className="mt-1">
+            Nothing is generated unless you press the button. Each image costs a few cents.
+            {draft.status === "published" ? " They are added to the unapproved changes; the live listing is unchanged until you apply them." : " You can also upload your own photos instead."}
+          </p>
           <button type="button" disabled={Boolean(busy) || Boolean(autoProgress)} onClick={() => void generatePending(pendingImages)}
             className="mt-2 rounded-lg bg-[rgb(73,153,173)] px-4 py-2 font-bold text-white disabled:opacity-50">
             Create {pendingImages.length} missing image(s)

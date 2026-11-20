@@ -320,9 +320,10 @@ export default function AdminEditProductPage() {
         maximumRentalWeeks: Number(form.maximumRentalWeeks || "2"),
         minimumRentalMonths: Number(form.minimumRentalMonths || "1"),
         maximumRentalMonths: Number(form.maximumRentalMonths || "24"),
-        minimumRentalDays: Number(form.minimumRentalWeeks || "1") * 7,
-        maximumRentalDays: Number(form.maximumRentalWeeks || "2") * 7,
-        rentalPeriodUnit: "week",
+        // Occasion products rent by the day (1-7); the week-based form must not rewrite that.
+        minimumRentalDays: termsProduct?.rentalMode === "occasion" ? termsProduct.minimumRentalDays : Number(form.minimumRentalWeeks || "1") * 7,
+        maximumRentalDays: termsProduct?.rentalMode === "occasion" ? termsProduct.maximumRentalDays : Number(form.maximumRentalWeeks || "2") * 7,
+        rentalPeriodUnit: termsProduct?.rentalMode === "occasion" ? "day" : "week",
         deliveryFee: Number(form.deliveryFee || "0"),
         verificationRequired: form.verificationRequired,
         depositEnabled: form.depositEnabled,

@@ -111,6 +111,8 @@ const productDraftSchema = new mongoose.Schema(
       extractionConfidence: { type: String, default: "", trim: true },
       usedStrategies: { type: [String], default: [] },
       finalUrl: { type: String, default: "", trim: true },
+      // Fallback web-search sources: [{ url, role: manufacturer|retailer, used, note }].
+      sources: { type: [mongoose.Schema.Types.Mixed], default: [] },
     },
 
     providers: {

@@ -6,7 +6,8 @@
 
 const { fetchSourceDocument, SourceFetchError } = require("../source/fetch-source");
 const { extractProductFacts } = require("../source/extract-product");
-const { resolveTextProvider, resolveImageProvider, describeProviders, ProviderError } = require("./providers");
+const { resolveTextProvider, resolveImageProvider, describeProviders, ProviderError, resolveSearchCandidates } = require("./providers");
+const { runFallbackSearch, isThinExtraction } = require("../source/fallback-search");
 const {
   buildDraftProductPayload,
   buildSlug,
@@ -32,6 +33,22 @@ async function runExtraction(sourceUrl, deps = {}) {
     return { ok: true, result: empty, warnings: [{ code: "no_source_url", field: "sourceUrl", message: "No product link supplied; enter the details manually." }] };
   }
 
+  const searchCandidates = "searchCandidates" in deps ? deps.searchCandidates : resolveSearchCandidates();
+  const withFallback = async (partialFacts, originalWarnings, original) => {
+    // Blocked, unreadable or too thin: look for the same product elsewhere. We
+    // never try to get past the block itself.
+    const fallback = await runFallbackSearch({ sourceUrl, partialFacts }, { searchCandidates, fetchSourceDocument: deps.fetchSourceDocument });
+    if (!fallback.ok) {
+      return { ...original, warnings: [...originalWarnings, ...fallback.warnings], sources: fallback.sources };
+    }
+    return {
+      ok: true,
+      result: { ...fallback.result, finalUrl: sourceUrl },
+      warnings: [...originalWarnings.filter((w) => w.code !== "missing_product_name"), ...fallback.warnings],
+      sources: fallback.sources,
+    };
+  };
+
   try {
     const fetcher = deps.fetchSourceDocument || fetchSourceDocument;
     const { html, finalUrl } = await fetcher(sourceUrl);
@@ -46,14 +63,20 @@ async function runExtraction(sourceUrl, deps = {}) {
       });
     }
     if (!extracted.facts.name) {
-      warnings.push({ code: "missing_product_name", field: "title", message: "No product name found on the source page." });
+      warnings.push({ code: "missing_product_name", field: "sourceUrl", message: "No product name found on the source page." });
     }
 
-    return { ok: true, result: { ...extracted, finalUrl }, warnings };
+    const original = { ok: true, result: { ...extracted, finalUrl }, warnings };
+    if (isThinExtraction(extracted)) {
+      const outcome = await withFallback(extracted.facts, warnings, original);
+      // A thin page that yielded nothing better is still better than nothing.
+      return outcome;
+    }
+    return original;
   } catch (error) {
     const isKnown = error instanceof SourceFetchError;
     // Degrade, never abort: price + photos + URL are preserved either way.
-    return {
+    const failed = {
       ok: false,
       result: empty,
       warnings: [
@@ -65,6 +88,9 @@ async function runExtraction(sourceUrl, deps = {}) {
       ],
       error: isKnown ? error.code : "EXTRACTION_FAILED",
     };
+    // Private-network and malformed URLs are refused outright; no searching on their behalf.
+    if (isKnown && ["BLOCKED_ADDRESS", "INVALID_URL", "UNSUPPORTED_PROTOCOL", "CREDENTIALS_IN_URL"].includes(error.code)) return failed;
+    return withFallback({}, failed.warnings, failed);
   }
 }
 

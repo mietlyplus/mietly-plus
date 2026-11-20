@@ -65,3 +65,39 @@ The occasion daily rate and the delivery lead time can be edited at any time fro
 ## Not in this release
 
 Google/Gmail integration, a direct ChatGPT-to-Leihfluss API connection, and hreflang (language is a toggle on one URL, not separate URLs).
+
+## Full product settings (all optional)
+
+Besides `pricing.weekly` / `pricing.monthly`, a package can carry the rest of the product. Omitted values keep the product defaults; supplied values are stored as given. See `docs/examples/package-standard-full.json`.
+
+| Section | Fields |
+|---|---|
+| `pricing` | `weekly`, `monthly`, `weeklyOffer`, `monthlyOffer` (offers must be below the base price), `daily` (occasion) |
+| `inventory` | `stock`, `stockStatus` (`in_stock`/`low_stock`/`out_of_stock`/`preorder`), `lowStockWarning`, `maxRentalQuantity`, `unit`, `weightKg` |
+| `rental` | `minWeeks`, `maxWeeks`, `minMonths`, `maxMonths` |
+| `delivery` | `leadDays` (0-30), `fee` |
+| `risk` | `verificationRequired`, `depositEnabled`, `securityDeposit`, `replacementValue`, `refundable` (per product; defaults: verification on, deposit off) |
+| `display` | `isMostPopular` |
+| `images[]` | `order`, `primary`, `altDe`, `altEn`, `origin`, `license`, `note` |
+
+Invalid optional values are ignored with a warning, never silently replaced. Imports are always inactive.
+
+**Category and brand** match existing records exactly, never partially, and are never created. `identity.category` may be a name, `"Parent > Child"`, `{ "name": … }` or `{ "path": ["Parent", "Child"] }`. A name that exists under several parents is ambiguous and stays unresolved. Unresolved category/brand block publication until the owner chooses.
+
+## Upload (Admin → AI Product Queue)
+
+One drop zone accepts the JSON file(s) and their images together. An image entry uses `"file": "name.webp"`, matched to an uploaded file by exact filename. The screen shows READY/INVALID, title, image count, missing referenced images and unused images before anything is added.
+
+## Product link workflow: source fallback
+
+If the supplied page is blocked, unreadable or too thin, the importer does not try to get past the block. It searches the web for the exact product (manufacturer first, then accessible retailers), reads up to three of those pages with the same hardened fetcher, merges the facts, flags disagreements, and records the sources on the draft. Owner prices stay authoritative; retailer purchase prices are never used. AI image generation is optional and only runs when the owner presses the button.
+
+## Cleanup
+
+```bash
+cd backend
+npm run clean:products              # dry run: prints DB host/name and counts
+node scripts/clean-product-data.js --apply   # asks for a typed confirmation phrase
+```
+
+Deletes only Products, ProductDrafts and ProductPackages.
