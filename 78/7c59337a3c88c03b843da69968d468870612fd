@@ -1,0 +1,65 @@
+docs/examples/package-standard-full.json
+  s_755b8269fb6f42::t_9dbebbe1e25aa3 1-27
+backend/lib/product-payload.js
+  s_755b8269fb6f42::t_1a02dc0fac1901 93-132,226-227
+backend/lib/ai/draft-service.js
+  s_755b8269fb6f42::t_c18863cb036442 36
+  s_755b8269fb6f42::t_ec107a744f4b00 9-10,92
+  s_755b8269fb6f42::t_53e4eb67db3a94 37-51,66,69-75,79,91,93
+backend/models/ProductDraft.js
+  s_755b8269fb6f42::t_ec107a744f4b00 114-115
+frontend/lib/package-files.test.ts
+  s_755b8269fb6f42::t_61346d1fa041ae 1-31
+backend/index.js
+  s_755b8269fb6f42::t_ec107a744f4b00 2804,2870,3547
+  s_755b8269fb6f42::t_1a02dc0fac1901 2744,2754
+  s_755b8269fb6f42::t_a0b781e612a1bf 3118-3123
+  s_755b8269fb6f42::t_ae0aa240ca45a7 3055,3094-3100,3141,3144
+backend/integration/product-package.test.js
+  s_755b8269fb6f42::t_e6006edfdecd77 197-270
+frontend/app/admin/products/edit/[id]/page.tsx
+  s_755b8269fb6f42::t_cfc528bb5e0797 323-326
+backend/lib/product-cleanup.js
+  s_755b8269fb6f42::t_b5b3ac1ef8dcf5 1-27
+backend/lib/product-package.test.js
+  s_755b8269fb6f42::t_5965ec8ac6ea35 120-181
+frontend/lib/package-files.ts
+  s_755b8269fb6f42::t_61346d1fa041ae 1-106
+backend/scripts/clean-product-data.js
+  s_755b8269fb6f42::t_b5b3ac1ef8dcf5 1-57
+frontend/app/admin/products/draft/[id]/page.tsx
+  s_755b8269fb6f42::t_5b32d6b65eb39e 108-109,335,337-341
+backend/lib/source/fallback-search.test.js
+  s_755b8269fb6f42::t_5965ec8ac6ea35 1-76
+frontend/app/admin/products/queue/page.tsx
+  s_755b8269fb6f42::t_4f4ebd4bcd42e9 3,13,26,28,45-75,78,81-83,92-94,145-153,158-159,162-186
+docs/ai-product-package.md
+  s_755b8269fb6f42::t_9dbebbe1e25aa3 68-103
+backend/lib/product-package.js
+  s_755b8269fb6f42::t_ae0aa240ca45a7 345
+  s_755b8269fb6f42::t_a16bc42a17e68d 17-22,24,27,40,52-73,120-121,158-206,211-212,231-234,274-275,305,312-317,344,346-347,389,391,395,413-435
+backend/lib/ai/providers.js
+  s_755b8269fb6f42::t_ec107a744f4b00 126-157,256
+backend/lib/source/fallback-search.js
+  s_755b8269fb6f42::t_2e67c3b5ee80e0 1-197
+frontend/tsconfig.json
+  s_755b8269fb6f42::t_1be2349b3f9a18 33
+backend/package.json
+  s_755b8269fb6f42::t_b5b3ac1ef8dcf5 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "787c59337a3c88c03b843da69968d468870612fd",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
