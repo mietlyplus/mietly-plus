@@ -2741,7 +2741,7 @@ function mapDraft(draft, product) {
 
 async function loadCatalogueForMatching() {
   const [categories, brands] = await Promise.all([
-    Category.find().select("_id name slug").lean(),
+    Category.find().select("_id name slug parentId").lean(),
     Brand.find({ isActive: true }).select("_id name slug").lean(),
   ]);
 
@@ -2751,6 +2751,7 @@ async function loadCatalogueForMatching() {
       nameEn: String(c.name?.en || ""),
       nameDe: String(c.name?.de || ""),
       slug: String(c.slug || ""),
+      parentId: c.parentId ? String(c.parentId) : null,
     })),
     brands: brands.map((b) => ({ id: String(b._id), name: String(b.name || ""), slug: String(b.slug || "") })),
   };
@@ -2800,7 +2801,7 @@ const DRAFT_TEXT_FIELDS = [
 
 // Carried over when a source that already extracted fine is reused, so its
 // warnings are not lost.
-const EXTRACTION_WARNING_PREFIXES = ["extraction_", "low_extraction", "missing_product_name"];
+const EXTRACTION_WARNING_PREFIXES = ["extraction_", "low_extraction", "missing_product_name", "fallback_", "sources_disagree"];
 
 async function populatedProduct(productId) {
   if (!productId) return null;
@@ -2866,6 +2867,7 @@ async function completeDraftGeneration(draft, { reextract = true } = {}) {
       extractionConfidence: extraction.result.confidence,
       usedStrategies: extraction.result.usedStrategies,
       finalUrl: extraction.result.finalUrl || draft.sourceUrl,
+      sources: extraction.sources || [],
     };
   } else {
     warnings.push(
@@ -3050,7 +3052,7 @@ const ProductPackage = require("./models/ProductPackage");
 const { normalizeDailyRate, dailyRateFromLegacyOptions } = require("./lib/occasion-pricing");
 const { parseDeliveryLeadDays, checkStartDate } = require("./lib/delivery-lead-time");
 const { validateProductPackage, buildPackageProductPayload } = require("./lib/product-package");
-const { buildSlug: buildPackageSlug, matchCategory: matchPackageCategory, matchBrand: matchPackageBrand } = require("./lib/product-payload");
+const { buildSlug: buildPackageSlug, matchCategoryExact, matchBrandExact } = require("./lib/product-payload");
 
 const PACKAGE_UPLOAD_LIMIT = 25;
 const PACKAGE_IMPORT_BUDGET_MS = 40 * 1000;
@@ -3089,7 +3091,13 @@ async function importPackage(doc, adminId) {
   const extraWarnings = [];
 
   const hosted = [];
-  const orderedImages = [...pkg.images].sort((a, b) => Number(b.primary) - Number(a.primary));
+  // Primary first, then the stated order, then the order they were listed in.
+  const orderedImages = [...pkg.images].sort(
+    (a, b) =>
+      Number(b.primary) - Number(a.primary) ||
+      (a.order ?? Infinity) - (b.order ?? Infinity) ||
+      (a.index ?? 0) - (b.index ?? 0)
+  );
   for (const image of orderedImages) {
     if (hosted.length >= PACKAGE_DRAFT_IMAGE_CAP) {
       extraWarnings.push(`Only ${PACKAGE_DRAFT_IMAGE_CAP} images are imported per listing; the rest were left out.`);
@@ -3107,12 +3115,12 @@ async function importPackage(doc, adminId) {
   }
 
   const catalogue = await loadCatalogueForMatching();
-  const category = matchPackageCategory(pkg.identity.category.name, catalogue.categories);
-  const brand = matchPackageBrand(pkg.identity.brand, catalogue.brands);
-  // Only a clear match is applied. Anything weaker stays unresolved so the owner
-  // chooses; a package never creates a category or brand on its own.
-  const categoryId = category.confidence === "high" ? category.categoryId : null;
-  const brandId = brand.confidence === "high" ? brand.brandId : null;
+  // Exact matches only (category by full path when given). Anything else stays
+  // unresolved so the owner chooses; a package never creates a category or brand.
+  const category = matchCategoryExact(pkg.identity.category.path?.length ? pkg.identity.category.path : pkg.identity.category.name, catalogue.categories);
+  const brand = matchBrandExact(pkg.identity.brand, catalogue.brands);
+  const categoryId = category.resolved ? category.categoryId : null;
+  const brandId = brand.resolved ? brand.brandId : null;
 
   const slug = await ensureUniqueSlug(buildPackageSlug([pkg.identity.brand, pkg.identity.model || pkg.titles.de || pkg.titles.en], pkg.externalId));
   const payload = buildPackageProductPayload(pkg, {
@@ -3130,10 +3138,10 @@ async function importPackage(doc, adminId) {
     ...doc.warnings.map((message) => ({ code: "package_validation", field: "", message })),
   ];
   if (!categoryId) {
-    draftWarnings.push({ code: "category_unresolved", field: "category", message: `Category "${pkg.identity.category.name || "(none given)"}" matched no existing category. Choose one when reviewing.` });
+    draftWarnings.push({ code: "category_unresolved", field: "category", message: `Category "${pkg.identity.category.name || "(none given)"}" is unresolved (${category.reason}). Choose one before publishing.` });
   }
   if (!brandId) {
-    draftWarnings.push({ code: "brand_unresolved", field: "brand", message: `Brand "${pkg.identity.brand || "(none given)"}" matched no existing brand. Choose one when reviewing.` });
+    draftWarnings.push({ code: "brand_unresolved", field: "brand", message: `Brand "${pkg.identity.brand || "(none given)"}" matched no existing brand exactly. Choose one before publishing.` });
   }
 
   const specText = pkg.specifications.map((s) => `${s.key}: ${s.value}`).join("\n");
@@ -3536,6 +3544,7 @@ app.post("/api/admin/product-drafts/:id/regenerate-text", requireAdminAuth, asyn
         extractionConfidence: extraction.result.confidence,
         usedStrategies: extraction.result.usedStrategies,
         finalUrl: extraction.result.finalUrl || draft.sourceUrl,
+        sources: extraction.sources || [],
       };
       draft.steps.extraction.status = "done";
       draft.steps.extraction.error = "";

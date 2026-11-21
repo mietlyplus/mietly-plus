@@ -90,6 +90,46 @@ function matchCategory(candidateName, categories, suggestedId) {
   return { categoryId: null, confidence: "low", reason: "no existing category matched" };
 }
 
+/**
+ * Exact-only, hierarchy-aware category match for prepared packages.
+ * `hint` is a name, a "Parent > Child" string, or an array path. A path walks
+ * the tree (root first); a single name must match exactly one category.
+ * Anything else (no match, ambiguous name, partial match) is unresolved so the
+ * owner chooses. Never creates a category.
+ * @returns {{categoryId: string|null, resolved: boolean, reason: string}}
+ */
+function matchCategoryExact(hint, categories) {
+  const path = (Array.isArray(hint) ? hint : String(hint || "").split(/\s*(?:>|\/|›)\s*/))
+    .map((part) => normalizeKey(part))
+    .filter(Boolean);
+  if (path.length === 0) return { categoryId: null, resolved: false, reason: "no category given" };
+
+  const named = (category, key) =>
+    normalizeKey(category.nameEn) === key || normalizeKey(category.nameDe) === key || normalizeKey(category.slug) === key;
+
+  if (path.length === 1) {
+    const hits = categories.filter((category) => named(category, path[0]));
+    if (hits.length === 1) return { categoryId: hits[0].id, resolved: true, reason: "exact match" };
+    return { categoryId: null, resolved: false, reason: hits.length > 1 ? "ambiguous: several categories share this name; give the full path" : "no exact match" };
+  }
+
+  let parentId = null;
+  for (const key of path) {
+    const hit = categories.find((category) => (category.parentId || null) === parentId && named(category, key));
+    if (!hit) return { categoryId: null, resolved: false, reason: "path not found in the category tree" };
+    parentId = hit.id;
+  }
+  return { categoryId: parentId, resolved: true, reason: "exact path match" };
+}
+
+/** Exact-only brand match for prepared packages. */
+function matchBrandExact(candidateName, brands) {
+  const needle = normalizeKey(candidateName);
+  if (!needle) return { brandId: null, brandName: "", resolved: false };
+  const hit = brands.find((brand) => normalizeKey(brand.name) === needle || normalizeKey(brand.slug) === needle);
+  return hit ? { brandId: hit.id, brandName: hit.name, resolved: true } : { brandId: null, brandName: String(candidateName), resolved: false };
+}
+
 /** Same contract as matchCategory. Never creates a brand. */
 function matchBrand(candidateName, brands, suggestedId) {
   if (suggestedId) {
@@ -183,6 +223,8 @@ module.exports = {
   mapRentalPricing,
   matchBrand,
   matchCategory,
+  matchCategoryExact,
+  matchBrandExact,
   slugify,
   toMoney,
 };

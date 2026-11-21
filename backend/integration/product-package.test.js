@@ -194,3 +194,77 @@ test("a failed import leaves no orphan product or draft and the package stays re
   const retry = await post("/api/admin/product-packages/import", { allReady: true });
   assert.equal(retry.body.imported.length, 1, "retry succeeds once the fault is gone");
 });
+
+test("a complete package imports as a private draft with every supplied setting and the hierarchical category resolved", async () => {
+  const parent = await Category.create({ name: { en: "Home", de: "Haushalt" }, slug: "haushalt" });
+  const child = await Category.create({ name: { en: "Cooking", de: "Kochen" }, slug: "kochen", parentId: parent._id });
+  const pkg = example("package-standard.json");
+  pkg.externalId = "full-fields";
+  pkg.titles = { de: "Voll Gerät", en: "Full device" };
+  pkg.identity = { ...pkg.identity, model: "FULL-1", category: { path: ["Haushalt", "Kochen"] } };
+  pkg.images = [
+    { url: HOSTED, origin: "owner_photo", altDe: "zwei", order: 2 },
+    { url: HOSTED + "?b", origin: "owner_photo", altDe: "eins", order: 1 },
+  ];
+  pkg.inventory = { stock: 2, maxRentalQuantity: 2 };
+  pkg.risk = { verificationRequired: false, depositEnabled: true, securityDeposit: 100, replacementValue: 300 };
+  pkg.delivery = { leadDays: 4, fee: 7.5 };
+  pkg.pricing = { weekly: 20, monthly: 55, weeklyOffer: 18 };
+  pkg.display = { isMostPopular: true };
+
+  const submitted = await post("/api/admin/product-packages", { packages: [pkg] });
+  assert.equal(submitted.body.results[0].status, "ready");
+  const imported = await post("/api/admin/product-packages/import", { allReady: true });
+  assert.equal(imported.body.imported.length, 1, JSON.stringify(imported.body));
+
+  const product = await Product.findById(imported.body.imported[0].productId);
+  assert.equal(product.isActive, false);
+  assert.equal(String(product.categoryId), String(child._id));
+  assert.equal(product.stock, 2);
+  assert.equal(product.maxRentalQuantity, 2);
+  assert.equal(product.verificationRequired, false);
+  assert.equal(product.depositEnabled, true);
+  assert.equal(product.securityDeposit, 100);
+  assert.equal(product.replacementValue, 300);
+  assert.equal(product.deliveryLeadDays, 4);
+  assert.equal(product.deliveryFee, 7.5);
+  assert.equal(product.offerPrice, 18);
+  assert.equal(product.isMostPopular, true);
+  assert.equal(product.imageAlts[0].de, "eins", "images follow the stated order");
+});
+
+test("an unmatched category/brand stays unresolved and blocks publication; nothing is created", async () => {
+  const pkg = example("package-standard.json");
+  pkg.externalId = "unresolved";
+  pkg.titles = { de: "Ohne Zuordnung", en: "Unassigned" };
+  pkg.identity = { ...pkg.identity, model: "U-1", brand: "Nobrand", category: { name: "Kitch" } };
+  pkg.images = [{ url: HOSTED, origin: "owner_photo", altDe: "x" }];
+  const categories = await Category.countDocuments({});
+  const brands = await Brand.countDocuments({});
+  await post("/api/admin/product-packages", { packages: [pkg] });
+  const imported = await post("/api/admin/product-packages/import", { allReady: true });
+  const draftId = imported.body.imported[0].draftId;
+  const product = await Product.findById(imported.body.imported[0].productId);
+  assert.ok(!product.categoryId && !product.brandId);
+  assert.equal(await Category.countDocuments({}), categories);
+  assert.equal(await Brand.countDocuments({}), brands);
+  const blocked = await post(`/api/admin/product-drafts/${draftId}/publish`, { confirm: true });
+  assert.equal(blocked.status, 400);
+});
+
+test("product cleanup deletes only products, drafts and queue entries", async () => {
+  const { countProductData, deleteProductData } = require(path.join(ROOT, "lib/product-cleanup"));
+  const models = {
+    Product, ProductDraft: require(path.join(ROOT, "models/ProductDraft")), ProductPackage: require(path.join(ROOT, "models/ProductPackage")),
+  };
+  const before = await countProductData(models);
+  assert.ok(before.every((entry) => entry.count > 0), JSON.stringify(before));
+  const categories = await Category.countDocuments({});
+  const brands = await Brand.countDocuments({});
+  const admins = await Admin.countDocuments({});
+  await deleteProductData(models);
+  assert.ok((await countProductData(models)).every((entry) => entry.count === 0));
+  assert.equal(await Category.countDocuments({}), categories);
+  assert.equal(await Brand.countDocuments({}), brands);
+  assert.equal(await Admin.countDocuments({}), admins);
+});
