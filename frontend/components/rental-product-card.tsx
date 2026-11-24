@@ -4,6 +4,7 @@ import Link from "next/link";
 import { buildProductPath } from "@/lib/product-path";
 import { useSiteLocale } from "@/lib/use-site-locale";
 import { Product } from "@/lib/types";
+import { resolveCardPrice } from "@/lib/card-price";
 
 type RentalProductCardProps = {
   product: Product;
@@ -49,34 +50,11 @@ export function RentalProductCard({
   onToggleWishlist,
 }: RentalProductCardProps) {
   const { locale } = useSiteLocale("de");
-  const buyerPrice = product.buyerPrice || 0;
-  const offerPrice = product.offerPrice || 0;
-  const monthlyBuyerPrice = product.monthlyBuyerPrice || 0;
-  const monthlyOfferPrice = product.monthlyOfferPrice || 0;
-  const monthlyPrice = product.monthlyPrice || 0;
-
-  const monthlyHasOffer = monthlyBuyerPrice > 0 && monthlyOfferPrice > 0 && monthlyOfferPrice < monthlyBuyerPrice;
-  const hasWeeklyOffer = buyerPrice > 0 && offerPrice > 0 && offerPrice < buyerPrice;
-
-  const useMonthly = monthlyBuyerPrice > 0 || monthlyOfferPrice > 0 || monthlyPrice > 0;
-
-  const effectiveBuyerPrice = useMonthly ? monthlyBuyerPrice : buyerPrice;
-  const effectiveOfferPrice = useMonthly ? monthlyOfferPrice : offerPrice;
-  const hasOffer = useMonthly ? monthlyHasOffer : hasWeeklyOffer;
-  const discountPercent = hasOffer ? Math.round(((effectiveBuyerPrice - effectiveOfferPrice) / effectiveBuyerPrice) * 100) : 0;
-
-  let effectivePrice: number;
-  if (hasOffer) {
-    effectivePrice = effectiveOfferPrice;
-  } else if (useMonthly) {
-    effectivePrice = effectiveBuyerPrice > 0 ? effectiveBuyerPrice : monthlyPrice;
-  } else {
-    effectivePrice = effectiveBuyerPrice > 0 ? effectiveBuyerPrice : 0;
-  }
-
-  const occasionOptions = product.rentalMode === "occasion" ? [...(product.occasionPricing || [])].sort((a, b) => a.price - b.price) : [];
-  const isOccasion = occasionOptions.length > 0;
-  if (isOccasion) effectivePrice = occasionOptions[0].price;
+  const card = resolveCardPrice(product);
+  const effectivePrice = card.price;
+  const effectiveBuyerPrice = card.basePrice;
+  const hasOffer = card.hasOffer;
+  const discountPercent = hasOffer ? Math.round(((card.basePrice - card.price) / card.basePrice) * 100) : 0;
   const t = cardCopy[locale];
   // The visitor's language first; the single legacy text, then the other
   // language, only when that one is empty.
@@ -84,9 +62,7 @@ export function RentalProductCard({
   const shortDescription = stripHtml(
     product.shortDescriptionI18n?.[locale] || product.shortDescription || product.shortDescriptionI18n?.[otherLocale] || ""
   );
-  const priceUnit = isOccasion
-    ? `/ ${occasionOptions[0].days} ${occasionOptions[0].days > 1 ? t.days : t.day}`
-    : useMonthly ? `/ ${t.month}` : `/ ${t.week}`;
+  const priceUnit = `/ ${t[card.unit]}`;
   const title = product.titleI18n?.[locale] || product.title;
   const categoryName = product.category?.name?.[locale] || product.category?.name?.en || t.general;
   const offerBadge = t.off(discountPercent);
@@ -153,7 +129,7 @@ export function RentalProductCard({
 
             <div className="space-y-0.5 md:space-y-1">
               <p className="text-lg font-extrabold leading-none text-[rgb(60,138,158)] md:text-xl">
-                {t.rent} {isOccasion ? t.from : ""}EUR {formatAmount(effectivePrice)} {priceUnit}
+                {t.rent} EUR {formatAmount(effectivePrice)} {priceUnit}
               </p>
               {hasOffer ? (
                 <p className="text-xs text-zinc-400 line-through md:text-sm">EUR {formatAmount(effectiveBuyerPrice)}</p>

@@ -268,3 +268,24 @@ test("product cleanup deletes only products, drafts and queue entries", async ()
   assert.equal(await Brand.countDocuments({}), brands);
   assert.equal(await Admin.countDocuments({}), admins);
 });
+
+test("bulk delete removes only the selected products and their drafts", async () => {
+  const ProductDraft = require(path.join(ROOT, "models/ProductDraft"));
+  const base = { monthlyPrice: 10, imageUrl: "https://x/y.jpg" };
+  const a = await Product.create({ ...base, title: "A", slug: "bulk-a", isActive: false });
+  const b = await Product.create({ ...base, title: "B", slug: "bulk-b", isActive: false });
+  const keep = await Product.create({ ...base, title: "K", slug: "bulk-k", isActive: false });
+  await ProductDraft.create({ productId: a._id, createdByAdminId: new mongoose.Types.ObjectId(), origin: "package", status: "ready" });
+  const keepDraft = await ProductDraft.create({ productId: keep._id, createdByAdminId: new mongoose.Types.ObjectId(), origin: "package", status: "ready" });
+  const categories = await Category.countDocuments({});
+
+  assert.equal((await post("/api/admin/products/bulk-delete", { ids: [] })).status, 400);
+  assert.equal((await post("/api/admin/products/bulk-delete", { ids: ["nope"] })).status, 400);
+  const result = await post("/api/admin/products/bulk-delete", { ids: [String(a._id), String(b._id)] });
+  assert.deepEqual(result.body, { deletedProducts: 2, deletedDrafts: 1 });
+  assert.ok(await Product.findById(keep._id));
+  assert.ok(await ProductDraft.findById(keepDraft._id));
+  assert.equal(await Category.countDocuments({}), categories);
+  const anon = await call("/api/admin/products/bulk-delete", { method: "POST", body: JSON.stringify({ ids: [String(keep._id)] }) }, false);
+  assert.equal(anon.status, 401);
+});

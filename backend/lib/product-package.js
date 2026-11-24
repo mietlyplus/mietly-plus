@@ -18,7 +18,7 @@
 //   inventory       { stock, stockStatus, lowStockWarning, maxRentalQuantity, unit, weightKg }  all optional
 //   rental          { minWeeks, maxWeeks, minMonths, maxMonths }                                  all optional
 //   risk            { verificationRequired, depositEnabled, securityDeposit, replacementValue, refundable }  all optional
-//   display         { isMostPopular }
+//   display         { isMostPopular, cardPriceUnit: week|month|day }
 //   (identity.category may be a name, "Parent > Child", { name } or { path: ["Parent","Child"] })
 //   tags            [string]
 //   pricing         { weekly, monthly, weeklyOffer?, monthlyOffer? }  standard only
@@ -38,6 +38,7 @@ const RENTAL_MODES = ["standard", "occasion"];
 const IMAGE_ORIGINS = ["owner_photo", "ai_generated", "licensed_asset", "reference_only"];
 const SOURCE_TYPES = ["url", "pdf", "photo", "instruction", "other"];
 const STOCK_STATUSES = ["in_stock", "low_stock", "out_of_stock", "preorder"];
+const CARD_PRICE_UNITS = ["week", "month", "day"];
 const MAX_IMAGES = 12;
 const MAX_SPECS = 80;
 
@@ -203,6 +204,11 @@ function validateProductPackage(input) {
   if (risk.depositEnabled !== true && risk.securityDeposit > 0) warnings.push("A securityDeposit amount was given but depositEnabled is not true; no deposit will be charged.");
 
   const isMostPopular = optionalBoolean(input.display, "isMostPopular", "display.isMostPopular", warnings);
+  let cardPriceUnit;
+  if (input.display?.cardPriceUnit !== undefined && input.display.cardPriceUnit !== "") {
+    if (CARD_PRICE_UNITS.includes(input.display.cardPriceUnit)) cardPriceUnit = input.display.cardPriceUnit;
+    else warnings.push(`display.cardPriceUnit was ignored: use one of ${CARD_PRICE_UNITS.join(", ")}.`);
+  }
 
   // --- pricing ---
   let weekly = 0;
@@ -313,7 +319,7 @@ function validateProductPackage(input) {
     inventory,
     rental,
     risk,
-    display: { isMostPopular },
+    display: { isMostPopular, cardPriceUnit },
     pricing: rentalMode === "occasion" ? { daily: dailyRate } : { weekly, monthly, weeklyOffer, monthlyOffer },
     seo: {
       metaTitle: text(seoIn.metaTitle, 120),
@@ -429,6 +435,7 @@ function buildPackageProductPayload(pkg, { categoryId, brandId, brandName, image
       replacementValue: pkg.risk?.replacementValue,
       refundable: pkg.risk?.refundable,
       isMostPopular: pkg.display?.isMostPopular,
+      cardPriceUnit: pkg.display?.cardPriceUnit,
     }),
     minimumRentalDays: occasion ? 1 : 7,
     maximumRentalDays: occasion ? MAX_OCCASION_DAYS : 30,
