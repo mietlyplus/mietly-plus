@@ -57,6 +57,7 @@ type ProductForm = {
   seoOgDescription: string;
   seoOgImageUrl: string;
   isMostPopular: boolean;
+  cardPriceUnit: "" | "week" | "month" | "day";
   refundable: boolean;
   isActive: boolean;
 };
@@ -104,6 +105,7 @@ const initialForm: ProductForm = {
   seoOgDescription: "",
   seoOgImageUrl: "",
   isMostPopular: false,
+  cardPriceUnit: "",
   refundable: true,
   isActive: true,
 };
@@ -216,6 +218,7 @@ export default function AdminEditProductPage() {
           seoOgDescription: product.seo?.ogDescription || "",
           seoOgImageUrl: product.seo?.ogImageUrl || "",
           isMostPopular: Boolean(product.isMostPopular),
+          cardPriceUnit: product.cardPriceUnit || "",
           refundable: product.refundable !== false,
           isActive: product.isActive !== false,
         });
@@ -341,6 +344,7 @@ export default function AdminEditProductPage() {
           ogImageUrl: form.seoOgImageUrl.trim(),
         },
         isMostPopular: form.isMostPopular,
+        cardPriceUnit: form.cardPriceUnit,
         isActive: form.isActive,
       });
       setMessage("Rental product updated.");
@@ -525,6 +529,16 @@ export default function AdminEditProductPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-5">
+            <label className="block">
+              <span className="mb-1 block text-sm">Card price shows</span>
+              <select value={form.cardPriceUnit} onChange={(e)=>setForm((p)=>({...p,cardPriceUnit:e.target.value as ProductForm["cardPriceUnit"]}))} className="w-full rounded-lg border border-zinc-300 px-3 py-2">
+                <option value="">Automatic (day for occasion, otherwise week)</option>
+                <option value="week">Weekly price</option>
+                <option value="month">Monthly price</option>
+                <option value="day">Daily / occasion price</option>
+              </select>
+              <span className="text-xs text-zinc-500">Only changes the product card. All rental options stay on the product page.</span>
+            </label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.isMostPopular} onChange={(e)=>setForm((p)=>({...p,isMostPopular:e.target.checked}))}/>Add to Most Popular</label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.refundable} onChange={(e)=>setForm((p)=>({...p,refundable:e.target.checked}))}/>Refundable</label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.isActive} onChange={(e)=>setForm((p)=>({...p,isActive:e.target.checked}))}/>Active</label>

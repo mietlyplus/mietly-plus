@@ -1082,6 +1082,7 @@ export async function updateProduct(
       ogImageUrl?: string;
     };
     isMostPopular?: boolean;
+    cardPriceUnit?: "" | "week" | "month" | "day";
     isActive?: boolean;
   }
 ) {
@@ -1131,6 +1132,19 @@ export async function deleteProduct(adminToken: string, productId: string) {
   }
 
   return response.json() as Promise<{ message: string }>;
+}
+
+export async function bulkDeleteProducts(adminToken: string, ids: string[]) {
+  const response = await fetch(`${API_BASE_URL}/api/admin/products/bulk-delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: "Could not delete the selected products." }));
+    throw new Error(error.message || "Could not delete the selected products.");
+  }
+  return response.json() as Promise<{ deletedProducts: number; deletedDrafts: number }>;
 }
 
 export async function fetchMostPopularProducts() {

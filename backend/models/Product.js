@@ -269,6 +269,9 @@ const productSchema = new mongoose.Schema(
       type: [{ _id: false, de: { type: String, default: "", trim: true }, en: { type: String, default: "", trim: true } }],
       default: [],
     },
+    // Which rental price the product CARD shows. Empty = derive (occasion: day,
+    // otherwise week unless only a monthly price exists). Detail pages show all options.
+    cardPriceUnit: { type: String, enum: ["", "week", "month", "day"], default: "" },
     isMostPopular: {
       type: Boolean,
       default: false,

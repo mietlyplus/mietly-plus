@@ -179,3 +179,14 @@ test("category matching is exact and hierarchy-aware; ambiguous or partial names
   assert.equal(matchBrandExact("medion", brands).brandId, "b");
   assert.equal(matchBrandExact("Medi", brands).resolved, false);
 });
+
+test("display.cardPriceUnit is kept when valid and ignored with a warning otherwise", () => {
+  const ok = example("package-standard.json");
+  ok.display = { cardPriceUnit: "month" };
+  const good = validateProductPackage(ok);
+  assert.equal(buildPackageProductPayload(good.package, { categoryId: null, brandId: null, brandName: "", images: [], slug: "s" }).cardPriceUnit, "month");
+  ok.display = { cardPriceUnit: "year" };
+  const bad = validateProductPackage(ok);
+  assert.ok(bad.warnings.some((w) => w.includes("cardPriceUnit")));
+  assert.equal("cardPriceUnit" in buildPackageProductPayload(bad.package, { categoryId: null, brandId: null, brandName: "", images: [], slug: "s" }), false);
+});

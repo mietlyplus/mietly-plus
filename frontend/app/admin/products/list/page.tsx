@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { deleteProduct, fetchAdminProducts } from "@/lib/api";
+import { bulkDeleteProducts, deleteProduct, fetchAdminProducts } from "@/lib/api";
 import { Product } from "@/lib/types";
 
 // Mirrors the server's pricing rule (backend/lib/pricing.js): an offer only
@@ -24,10 +24,31 @@ export default function AdminProductsListPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
 
   const loadProducts = async (token: string) => {
     const data = await fetchAdminProducts(token);
     setProducts(data);
+    setSelected((current) => current.filter((id) => data.some((product) => product.id === id)));
+  };
+
+  const allSelected = products.length > 0 && selected.length === products.length;
+
+  const onBulkDelete = async () => {
+    if (!adminToken || selected.length === 0) return;
+    const names = products.filter((product) => selected.includes(product.id)).slice(0, 5).map((product) => product.title);
+    const more = selected.length > names.length ? `\n...and ${selected.length - names.length} more` : "";
+    if (!window.confirm(`Permanently delete ${selected.length} selected product(s) and their drafts?\n\n${names.join("\n")}${more}\n\nCategories, brands, orders and images are not affected. This cannot be undone.`)) return;
+    setMessage("");
+    setError("");
+    try {
+      const result = await bulkDeleteProducts(adminToken, selected);
+      setMessage(`Deleted ${result.deletedProducts} product(s) and ${result.deletedDrafts} draft(s).`);
+      setSelected([]);
+      await loadProducts(adminToken);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete the selected products.");
+    }
   };
 
   useEffect(() => {
@@ -69,10 +90,31 @@ export default function AdminProductsListPage() {
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+        {products.length > 0 ? (
+          <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
+            <label className="flex items-center gap-2 font-medium text-zinc-700">
+              <input type="checkbox" className="h-4 w-4" checked={allSelected} onChange={(e) => setSelected(e.target.checked ? products.map((product) => product.id) : [])} />
+              Select all ({products.length})
+            </label>
+            <button
+              type="button"
+              disabled={selected.length === 0}
+              onClick={() => void onBulkDelete()}
+              className="rounded-lg border border-red-200 px-3 py-1.5 font-medium text-red-600 hover:bg-red-50 disabled:opacity-40"
+            >
+              Delete selected ({selected.length})
+            </button>
+          </div>
+        ) : null}
         <div className="space-y-3">
           {products.length === 0 ? <p className="text-sm text-zinc-500">No products yet.</p> : null}
           {products.map((product) => (
             <div key={product.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-zinc-200 p-3">
+              <input
+                type="checkbox" className="h-4 w-4" aria-label={`Select ${product.title}`}
+                checked={selected.includes(product.id)}
+                onChange={(e) => setSelected((current) => (e.target.checked ? [...current, product.id] : current.filter((id) => id !== product.id)))}
+              />
               <img src={product.imageUrl} alt={product.title} className="h-14 w-24 rounded object-cover" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">

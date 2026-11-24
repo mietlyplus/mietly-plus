@@ -1041,6 +1041,7 @@ function mapProduct(product) {
     includedItems: (product.includedItems || []).map((i) => ({ de: i.de || "", en: i.en || "", quantity: i.quantity || 1 })),
     imageAlts: (product.imageAlts || []).map((a) => ({ de: a.de || "", en: a.en || "" })),
     isMostPopular: Boolean(product.isMostPopular),
+    cardPriceUnit: product.cardPriceUnit || "",
     isActive: Boolean(product.isActive),
     createdAt: product.createdAt,
     updatedAt: product.updatedAt,
@@ -2150,6 +2151,7 @@ app.post("/api/admin/products", requireAdminAuth, async (req, res) => {
     specifications = [],
     seo = {},
     isMostPopular = false,
+    cardPriceUnit,
     isActive = true,
   } = req.body;
 
@@ -2266,6 +2268,7 @@ app.post("/api/admin/products", requireAdminAuth, async (req, res) => {
       ogImageUrl: String(seo?.ogImageUrl || "").trim(),
     },
     isMostPopular: Boolean(isMostPopular),
+    cardPriceUnit: normalizeCardPriceUnit(cardPriceUnit),
     isActive: Boolean(isActive),
   });
 
@@ -2360,6 +2363,7 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
     specifications = [],
     seo = {},
     isMostPopular = false,
+    cardPriceUnit,
     isActive = true,
   } = req.body;
 
@@ -2510,6 +2514,7 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
     ogImageUrl: String(seo?.ogImageUrl || "").trim(),
   };
   product.isMostPopular = Boolean(isMostPopular);
+  if (cardPriceUnit !== undefined) product.cardPriceUnit = normalizeCardPriceUnit(cardPriceUnit);
 
   // An AI-origin listing must go live through the draft approval, which also
   // applies the fixture and source-imagery checks. Activating it from the
@@ -2552,6 +2557,26 @@ app.put("/api/admin/products/:id", requireAdminAuth, async (req, res) => {
     .populate("categoryId", "name slug")
     .populate("brandId", "name slug image");
   return res.json(mapProduct(populated));
+});
+
+function normalizeCardPriceUnit(value) {
+  const unit = String(value || "").trim();
+  return ["week", "month", "day"].includes(unit) ? unit : "";
+}
+
+const BULK_DELETE_LIMIT = 200;
+
+// Deletes ONLY the selected products and their linked ProductDraft records.
+// Categories, brands, orders, Stripe data and Cloudinary images are not touched.
+app.post("/api/admin/products/bulk-delete", requireAdminAuth, async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(String))] : [];
+  if (ids.length === 0) return res.status(400).json({ message: "Select at least one product." });
+  if (ids.length > BULK_DELETE_LIMIT) return res.status(400).json({ message: `At most ${BULK_DELETE_LIMIT} products can be deleted at once.` });
+  if (!ids.every((id) => mongoose.Types.ObjectId.isValid(id))) return res.status(400).json({ message: "Invalid product id." });
+
+  const drafts = await ProductDraft.deleteMany({ productId: { $in: ids } });
+  const products = await Product.deleteMany({ _id: { $in: ids } });
+  return res.json({ deletedProducts: products.deletedCount || 0, deletedDrafts: drafts.deletedCount || 0 });
 });
 
 app.delete("/api/admin/products/:id", requireAdminAuth, async (req, res) => {

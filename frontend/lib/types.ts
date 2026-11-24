@@ -135,6 +135,8 @@ export type Product = {
     ogImageUrl?: string;
   };
   isMostPopular: boolean;
+  /** Which price the product card shows; empty = derived. */
+  cardPriceUnit?: "" | "week" | "month" | "day";
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
