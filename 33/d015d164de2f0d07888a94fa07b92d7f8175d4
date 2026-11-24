@@ -1,0 +1,45 @@
+frontend/lib/api.ts
+  s_755b8269fb6f42::t_75c78b134df1e6 1085
+  s_755b8269fb6f42::t_e54701d43ca2fc 1137-1149
+frontend/lib/card-price.ts
+  s_755b8269fb6f42::t_e797f8ea4e0f72 1-42
+frontend/app/admin/products/list/page.tsx
+  s_755b8269fb6f42::t_e54701d43ca2fc 5,27,32-51,93-108,113-117
+backend/index.js
+  s_755b8269fb6f42::t_56098c7bdf5ea7 1044,2154,2271,2366,2517,2562-2579
+  s_755b8269fb6f42::t_eb65a5191a51d8 2580-2581
+frontend/lib/types.ts
+  s_755b8269fb6f42::t_e797f8ea4e0f72 138-139
+backend/models/Product.js
+  s_755b8269fb6f42::t_56098c7bdf5ea7 272-274
+backend/lib/product-package.test.js
+  s_755b8269fb6f42::t_90467519dbe7e9 182-192
+frontend/lib/card-price.test.ts
+  s_755b8269fb6f42::t_90467519dbe7e9 1-18
+backend/lib/product-package.js
+  s_755b8269fb6f42::t_56098c7bdf5ea7 21,41,207-211,322,438
+backend/integration/product-package.test.js
+  s_755b8269fb6f42::t_90467519dbe7e9 271-291
+frontend/components/rental-product-card.tsx
+  s_755b8269fb6f42::t_e54701d43ca2fc 7,53-57,65,132
+frontend/app/admin/products/edit/[id]/page.tsx
+  s_755b8269fb6f42::t_e54701d43ca2fc 60,108,221,347
+  s_755b8269fb6f42::t_83642b60ee1e8a 532-533,535-541
+  s_755b8269fb6f42::t_93f2c55e6fdb90 534
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "33d015d164de2f0d07888a94fa07b92d7f8175d4",
+  "prompts": {},
+  "sessions": {
+    "s_755b8269fb6f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03213943-f11a-4a3d-97d1-7bed8d6aaa33",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "mietlyplus <268271580+mietlyplus@users.noreply.github.com>"
+    }
+  }
+}
